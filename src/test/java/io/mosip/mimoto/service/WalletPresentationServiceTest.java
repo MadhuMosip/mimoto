@@ -25,10 +25,8 @@ import io.mosip.mimoto.util.UrlParameterUtils;
 import io.mosip.openID4VP.OpenID4VP;
 import org.springframework.http.ResponseEntity;
 import io.mosip.openID4VP.authorizationRequest.AuthorizationRequest;
-import io.mosip.openID4VP.authorizationRequest.clientMetadata.ClientMetadata;
 import io.mosip.openID4VP.authorizationResponse.unsignedVPToken.UnsignedVPToken;
-import io.mosip.openID4VP.authorizationResponse.unsignedVPToken.types.ldp.UnsignedLdpVPToken;
-import io.mosip.openID4VP.authorizationResponse.vpTokenSigningResult.types.ldp.LdpVPTokenSigningResult;
+import io.mosip.openID4VP.authorizationResponse.vpTokenSigningResult.VPTokenSigningResult;
 import io.mosip.openID4VP.constants.FormatType;
 import io.mosip.openID4VP.verifier.VerifierResponse;
 import org.junit.Before;
@@ -154,11 +152,6 @@ public class WalletPresentationServiceTest {
         when(mockOpenID4VP.authenticateVerifier(anyString(), anyList(), anyBoolean())).thenReturn(mockAuthorizationRequest);
         when(verifierService.isVerifierTrustedByWallet(anyString(), anyString())).thenReturn(true);
 
-        ClientMetadata clientMetadata = mock(ClientMetadata.class);
-        when(clientMetadata.getClientName()).thenReturn("Test Verifier");
-        when(clientMetadata.getLogoUri()).thenReturn("https://verifier.com/logo.png");
-        when(mockAuthorizationRequest.getClientMetadata()).thenReturn(clientMetadata);
-
         VPResponseDTO result = walletPresentationService.handleVPAuthorizationRequest(
                 urlEncodedVPAuthorizationRequest, walletId);
 
@@ -166,7 +159,7 @@ public class WalletPresentationServiceTest {
         assertNotNull(result.getPresentationId());
         assertNotNull(result.getVerifiablePresentationVerifierDTO());
         assertEquals("test-client", result.getVerifiablePresentationVerifierDTO().getId());
-        assertEquals("Test Verifier", result.getVerifiablePresentationVerifierDTO().getName());
+        assertEquals("test-client", result.getVerifiablePresentationVerifierDTO().getName());
         verify(openID4VPService).create(anyString());
         verify(verifierService).getTrustedVerifiers();
     }
@@ -178,10 +171,6 @@ public class WalletPresentationServiceTest {
         when(verifierService.isVerifierClientPreregistered(anyList(), anyString())).thenReturn(true);
         when(mockOpenID4VP.authenticateVerifier(anyString(), anyList(), anyBoolean())).thenReturn(mockAuthorizationRequest);
         when(verifierService.isVerifierTrustedByWallet(anyString(), anyString())).thenReturn(false);
-
-        ClientMetadata clientMetadata = mock(ClientMetadata.class);
-        when(clientMetadata.getClientName()).thenReturn("   ");
-        when(mockAuthorizationRequest.getClientMetadata()).thenReturn(clientMetadata);
 
         VPResponseDTO result = walletPresentationService.handleVPAuthorizationRequest(
                 urlEncodedVPAuthorizationRequest, walletId);
@@ -197,8 +186,6 @@ public class WalletPresentationServiceTest {
         when(verifierService.isVerifierClientPreregistered(anyList(), anyString())).thenReturn(false);
         when(mockOpenID4VP.authenticateVerifier(anyString(), anyList(), anyBoolean())).thenReturn(mockAuthorizationRequest);
         when(verifierService.isVerifierTrustedByWallet(anyString(), anyString())).thenReturn(false);
-        when(mockAuthorizationRequest.getClientMetadata()).thenReturn(null);
-
         VPResponseDTO result = walletPresentationService.handleVPAuthorizationRequest(
                 urlEncodedVPAuthorizationRequest, walletId);
 
@@ -217,11 +204,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -242,7 +227,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             ResponseEntity<?> response = walletPresentationService.handlePresentationAction(
                     walletId, presentationId, request, sessionData, base64Key);
@@ -299,8 +283,8 @@ public class WalletPresentationServiceTest {
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
         when(testOpenID4VP.authenticateVerifier(anyString(), anyList(), anyBoolean())).thenReturn(mockAuthorizationRequest);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        when(testOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        when(testOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         try (MockedStatic<SigningKeyUtil> jwtUtilMock = mockStatic(SigningKeyUtil.class);
              MockedStatic<UrlParameterUtils> urlUtilMock = mockStatic(UrlParameterUtils.class)) {
@@ -433,11 +417,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -458,7 +440,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionData, walletId, presentationId, submitRequest, base64Key);
@@ -475,11 +456,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(500);
@@ -500,7 +479,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionData, walletId, presentationId, submitRequest, base64Key);
@@ -517,11 +495,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         when(mockOpenID4VP.sendVPResponseToVerifier(any())).thenThrow(new RuntimeException("Network error"));
 
@@ -539,7 +515,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionData, walletId, presentationId, submitRequest, base64Key);
@@ -688,11 +663,9 @@ public class WalletPresentationServiceTest {
 
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
 
-            Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-            UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-            when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-            unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-            when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+            List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+            unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+            when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
             try {
                 SubmitPresentationResponseDTO response = walletPresentationService.submitPresentation(
@@ -795,11 +768,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -823,7 +794,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionData, walletId, presentationId, submitRequest, base64Key);
@@ -842,11 +812,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -863,7 +831,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionDataWithNullAuth, walletId, presentationId, submitRequest, base64Key);
@@ -885,11 +852,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -910,7 +875,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionDataWithInvalidAuth, walletId, presentationId, submitRequest, base64Key);
@@ -932,11 +896,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -957,7 +919,6 @@ public class WalletPresentationServiceTest {
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
             when(objectMapper.writeValueAsString(any())).thenReturn("{\"kty\":\"OKP\"}");
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionDataWithNullAuth, walletId, presentationId, submitRequest, base64Key);
@@ -972,11 +933,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -1000,7 +959,6 @@ public class WalletPresentationServiceTest {
                     .thenReturn("test-client");
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionData, walletId, presentationId, submitRequest, base64Key);
@@ -1015,11 +973,9 @@ public class WalletPresentationServiceTest {
         when(verifierService.getTrustedVerifiers()).thenReturn(verifiersDTO);
         when(keyPairService.getKeyPairFromDB(anyString(), anyString(), any(SigningAlgorithm.class))).thenReturn(keyPair);
 
-        Map<FormatType, UnsignedVPToken> unsignedTokens = new HashMap<>();
-        UnsignedLdpVPToken unsignedLdpToken = mock(UnsignedLdpVPToken.class);
-        when(unsignedLdpToken.getDataToSign()).thenReturn("base64-encoded-data");
-        unsignedTokens.put(FormatType.LDP_VC, unsignedLdpToken);
-        when(mockOpenID4VP.constructUnsignedVPToken(any(), anyString(), anyString())).thenReturn(unsignedTokens);
+        List<UnsignedVPToken> unsignedTokens = new ArrayList<>();
+        unsignedTokens.add(new UnsignedVPToken(FormatType.LDP_VC, "key-ref", "EdDSA", new byte[]{1, 2, 3}));
+        when(mockOpenID4VP.constructUnsignedVPToken(any())).thenReturn(unsignedTokens);
 
         VerifierResponse verifierResponse = mock(VerifierResponse.class);
         when(verifierResponse.getStatusCode()).thenReturn(200);
@@ -1043,7 +999,6 @@ public class WalletPresentationServiceTest {
                     .thenReturn("test-client");
 
             when(jwsSigner.sign(any(JWSHeader.class), any(byte[].class))).thenReturn(Base64URL.encode("signature"));
-            when(objectMapper.convertValue(any(), eq(LdpVPTokenSigningResult.class))).thenReturn(mock(LdpVPTokenSigningResult.class));
 
             SubmitPresentationResponseDTO result = walletPresentationService.submitPresentation(
                     sessionData, walletId, presentationId, submitRequest, base64Key);

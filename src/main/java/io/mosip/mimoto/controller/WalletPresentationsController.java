@@ -96,7 +96,9 @@ public class WalletPresentationsController {
             VPResponseDTO verifiablePresentationResponseDTO = walletPresentationService.handleVPAuthorizationRequest(vpAuthorizationRequest.getAuthorizationRequestUrl(), walletId);
 
             VerifiablePresentationSessionData verifiablePresentationSessionData = new VerifiablePresentationSessionData(verifiablePresentationResponseDTO.getPresentationId(),
-                    vpAuthorizationRequest.getAuthorizationRequestUrl(), Instant.now(),
+                    vpAuthorizationRequest.getAuthorizationRequestUrl(),
+                    verifiablePresentationResponseDTO.getSpecVersion(),
+                    Instant.now(),
                     verifiablePresentationResponseDTO.getVerifiablePresentationVerifierDTO().isPreregisteredWithWallet(), null);
 
             sessionManager.storePresentationSessionData(httpSession, verifiablePresentationSessionData, walletId);
@@ -135,10 +137,12 @@ public class WalletPresentationsController {
         WalletUtil.validateWalletId(httpSession, walletId);
 
         String base64Key = (String) httpSession.getAttribute(SessionKeys.WALLET_KEY);
+
         if (base64Key == null) {
             log.warn("Wallet key not found in session for walletId: {}", walletId);
             return Utilities.getErrorResponseEntityFromPlatformErrorMessage(UNAUTHORIZED_ACCESS, HttpStatus.UNAUTHORIZED, MediaType.APPLICATION_JSON);
         }
+
         try {
             VerifiablePresentationSessionData sessionData = sessionManager.getPresentationSessionData(httpSession, walletId, presentationId);
             MatchingCredentialsDTO matchingCredentials = walletPresentationService.getMatchingCredentials(sessionData, walletId, base64Key);

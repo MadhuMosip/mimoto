@@ -22,21 +22,18 @@ import io.mosip.mimoto.service.CredentialMatchingService;
 import io.mosip.mimoto.service.KeyPairRetrievalService;
 import io.mosip.mimoto.service.VerifierService;
 import io.mosip.mimoto.service.WalletPresentationService;
-import io.mosip.mimoto.service.DataProtectionService;
 import io.mosip.mimoto.util.SigningKeyUtil;
 import io.mosip.mimoto.util.Utilities;
 import io.mosip.mimoto.util.UrlParameterUtils;
 import io.mosip.openID4VP.OpenID4VP;
-import io.mosip.openID4VP.common.EncoderKt;
 import io.mosip.openID4VP.authorizationRequest.AuthorizationRequest;
+import io.mosip.openID4VP.authorizationRequest.AuthorizationDcqlRequest;
 import io.mosip.openID4VP.authorizationRequest.Verifier;
-import io.mosip.openID4VP.authorizationRequest.clientMetadata.ClientMetadata;
 import io.mosip.openID4VP.authorizationResponse.unsignedVPToken.UnsignedVPToken;
-import io.mosip.openID4VP.authorizationResponse.unsignedVPToken.types.ldp.UnsignedLdpVPToken;
 import io.mosip.openID4VP.authorizationResponse.vpTokenSigningResult.VPTokenSigningResult;
-import io.mosip.openID4VP.authorizationResponse.vpTokenSigningResult.types.ldp.LdpVPTokenSigningResult;
 import io.mosip.openID4VP.constants.FormatType;
 import io.mosip.openID4VP.verifier.VerifierResponse;
+import io.mosip.openID4VP.wallet.Credential;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -46,7 +43,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.lang.IllegalArgumentException;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -61,7 +57,6 @@ import static io.mosip.mimoto.exception.ErrorConstants.*;
 @Service
 public class WalletPresentationServiceImpl implements WalletPresentationService {
 
-    private static final String DEFAULT_SIGNATURE_SUITE = "JsonWebSignature2020";
     private static final String UNKNOWN_VERIFIER = "unknown";
     private static final String EMPTY_JSON = "{}";
     private static final String DEFAULT_SIGNING_ALGORITHM_NAME = "ED25519";
@@ -78,16 +73,13 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
 
     private final VerifiablePresentationsRepository verifiablePresentationsRepository;
 
-    private final DataProtectionService dataProtectionService;
-
-    public WalletPresentationServiceImpl(VerifierService verifierService, OpenID4VPService openID4VPService, ObjectMapper objectMapper, KeyPairRetrievalService keyPairService, CredentialMatchingService credentialMatchingService, VerifiablePresentationsRepository verifiablePresentationsRepository, DataProtectionService dataProtectionService) {
+    public WalletPresentationServiceImpl(VerifierService verifierService, OpenID4VPService openID4VPService, ObjectMapper objectMapper, KeyPairRetrievalService keyPairService, CredentialMatchingService credentialMatchingService, VerifiablePresentationsRepository verifiablePresentationsRepository) {
         this.verifierService = verifierService;
         this.openID4VPService = openID4VPService;
         this.objectMapper = objectMapper;
         this.keyPairService = keyPairService;
         this.credentialMatchingService = credentialMatchingService;
         this.verifiablePresentationsRepository = verifiablePresentationsRepository;
-        this.dataProtectionService = dataProtectionService;
     }
 
     @Override
@@ -102,7 +94,8 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
         AuthorizationRequest authorizationRequest = openID4VP.authenticateVerifier(urlEncodedVPAuthorizationRequest, preRegisteredVerifiers, shouldValidateClient);
         VerifiablePresentationVerifierDTO verifiablePresentationVerifierDTO = createVPResponseVerifierDTO(preRegisteredVerifiers, authorizationRequest, walletId);
 
-        return new VPResponseDTO(presentationId, verifiablePresentationVerifierDTO);
+        String specVersion = (authorizationRequest instanceof AuthorizationDcqlRequest) ? "v1" : "draft-23";
+        return new VPResponseDTO(presentationId, specVersion, verifiablePresentationVerifierDTO);
     }
 
     @Override
@@ -167,9 +160,18 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
     private VerifiablePresentationVerifierDTO createVPResponseVerifierDTO(List<Verifier> preRegisteredVerifiers, AuthorizationRequest authorizationRequest, String walletId) {
         boolean isVerifierPreRegisteredWithWallet = preRegisteredVerifiers.stream().map(Verifier::getClientId).toList().contains(authorizationRequest.getClientId());
         boolean isVerifierTrustedByWallet = verifierService.isVerifierTrustedByWallet(authorizationRequest.getClientId(), walletId);
-        String clientName = Optional.ofNullable(authorizationRequest.getClientMetadata()).map(ClientMetadata::getClientName).filter(name -> !name.isBlank()).orElse(authorizationRequest.getClientId());
-        String logo = Optional.ofNullable(authorizationRequest.getClientMetadata()).map(ClientMetadata::getLogoUri).orElse(null);
-        return new VerifiablePresentationVerifierDTO(authorizationRequest.getClientId(), clientName, logo, isVerifierTrustedByWallet, isVerifierPreRegisteredWithWallet, authorizationRequest.getRedirectUri());
+        // Newer OpenID4VP library does not expose parsed client_metadata on AuthorizationRequest.
+        // We keep UI backward compatible by defaulting display fields to client_id.
+        String clientName = authorizationRequest.getClientId();
+        String logo = null;
+        return new VerifiablePresentationVerifierDTO(
+                authorizationRequest.getClientId(),
+                clientName,
+                logo,
+                isVerifierTrustedByWallet,
+                isVerifierPreRegisteredWithWallet,
+                authorizationRequest.getRedirectUri()
+        );
     }
 
     /**
@@ -248,7 +250,8 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
         log.info("Starting presentation submission for walletId: {}, presentationId: {}", walletId, presentationId);
 
         // Step 1: Fetch full credentials by ID from cache
-        List<DecryptedCredentialDTO> selectedCredentials = fetchSelectedCredentials(sessionData, request.getSelectedCredentials());
+        List<String> selectedCredentialIds = resolveSelectedCredentialIds(request);
+        List<DecryptedCredentialDTO> selectedCredentials = fetchSelectedCredentials(sessionData, selectedCredentialIds);
 
         // Step 2: Create OpenID4VP instance and construct unsigned VP token
         OpenID4VP openID4VP = openID4VPService.create(presentationId);
@@ -259,18 +262,19 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
         SigningAlgorithm signingAlgorithm = SigningAlgorithm.valueOf(DEFAULT_SIGNING_ALGORITHM_NAME);
         KeyPair keyPair = keyPairService.getKeyPairFromDB(walletId, base64Key, signingAlgorithm);
         JWK jwk = SigningKeyUtil.generateJwk(signingAlgorithm, keyPair);
-        Map<FormatType, UnsignedVPToken> unsignedVPToken = constructUnsignedVPToken(openID4VP, selectedCredentials, jwk);
+        Map<String, List<Credential>> selectedCredentialsForJar =
+                buildSelectedCredentialsForJar(openID4VP, sessionData, selectedCredentials, request, jwk);
+        log.info("Constructing unsigned VP token for walletId: {}, presentationId: {}, selectedCredentialIds: {}", walletId, presentationId, selectedCredentialIds);
+        List<UnsignedVPToken> unsignedVPTokens = openID4VP.constructUnsignedVPToken(selectedCredentialsForJar);
 
         // Step 3: Sign token using user's private key
         JWSSigner jwsSigner = SigningKeyUtil.createSigner(signingAlgorithm, jwk);
-        Map<FormatType, LdpVPTokenSigningResult> vpTokenSigningResults = signVPToken(unsignedVPToken, jwsSigner);
+        List<VPTokenSigningResult> vpTokenSigningResults = signVPTokens(unsignedVPTokens, jwsSigner);
 
         // Step 4: Share verifiable presentation with verifier using OpenID4VP JAR
         log.debug("Calling OpenID4VP JAR's shareVerifiablePresentation method");
-        // Cast to the expected type for the JAR method
-        @SuppressWarnings({"unchecked", "rawtypes"}) Map<FormatType, VPTokenSigningResult> jarMap = (Map) vpTokenSigningResults;
         try {
-            VerifierResponse response = openID4VP.sendVPResponseToVerifier(jarMap);
+            VerifierResponse response = openID4VP.sendVPResponseToVerifier(vpTokenSigningResults);
             boolean shareSuccess = response.getStatusCode() >= 200 && response.getStatusCode() < 300;
             // Step 5: Store presentation record in database
             storePresentationRecord(walletId, presentationId, request, sessionData, shareSuccess, requestedAt);
@@ -284,61 +288,22 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
         }
     }
 
-    /**
-     * Signs VP token using JWSSigner for LDP_VC format
-     * Only LDP_VC format is supported. Throws InvalidRequestException for other formats.
-     */
-    private Map<FormatType, LdpVPTokenSigningResult> signVPToken(Map<FormatType, UnsignedVPToken> unsignedVPTokensMap, JWSSigner jwsSigner) {
-        log.debug("Signing VP token for {} format types", unsignedVPTokensMap.size());
+    private List<VPTokenSigningResult> signVPTokens(List<UnsignedVPToken> unsignedVPTokens, JWSSigner jwsSigner) {
+        if (unsignedVPTokens == null || unsignedVPTokens.isEmpty()) {
+            throw new IllegalArgumentException("No unsigned VP tokens to sign");
+        }
 
-        return unsignedVPTokensMap.entrySet().stream().map(entry -> {
-            FormatType formatType = entry.getKey();
-            UnsignedVPToken unsignedVPToken = entry.getValue();
-
-            if (formatType != FormatType.LDP_VC) {
-                log.error("Unsupported format type: {}. Only ldp_vc format is supported.", formatType);
-                throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), "Unsupported credential format: " + formatType + ". Only ldp_vc format is supported.");
-            }
-
+        return unsignedVPTokens.stream().map(unsignedVPToken -> {
             try {
-                LdpVPTokenSigningResult signingResult = signLdpVcFormat(unsignedVPToken, jwsSigner);
-                return Map.entry(formatType, signingResult);
-            } catch (JOSEException e) {
-                throw new RuntimeException("Failed to sign VP token for format: " + formatType, e);
+                // Use algorithm requested by library (ex: "EdDSA")
+                JWSAlgorithm alg = JWSAlgorithm.parse(unsignedVPToken.getSignatureAlgorithm());
+                JWSHeader header = new JWSHeader.Builder(alg).build();
+                Base64URL signature = jwsSigner.sign(header, unsignedVPToken.getDataToSign());
+                return new VPTokenSigningResult(signature.decode());
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to sign VP token for format: " + unsignedVPToken.getFormat(), e);
             }
-        }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-    }
-
-    /**
-     * Signs LDP_VC format verifiable presentation using detached JWT
-     */
-    private LdpVPTokenSigningResult signLdpVcFormat(UnsignedVPToken unsignedVPToken, JWSSigner jwsSigner) throws JOSEException {
-        log.debug("Signing LDP_VC format VP token");
-
-        String dataToSign = ((UnsignedLdpVPToken) unsignedVPToken).getDataToSign();
-
-        JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.EdDSA).criticalParams(Set.of(OpenID4VPConstants.JWT_CRITICAL_PARAM_B64)).base64URLEncodePayload(false).build();
-
-        // Create detached JWT signing input using DataProtectionService
-        String headerJson = header.toString();
-        byte[] inputBytes = dataProtectionService.createDetachedJwtSigningInput(headerJson, dataToSign);
-        
-        // Get Base64URL encoded header for proof construction
-        String header64 = EncoderKt.encodeToBase64Url(headerJson.getBytes(StandardCharsets.UTF_8));
-
-        // Sign using the provided JWSSigner
-        Base64URL signatureBase64URL = jwsSigner.sign(header, inputBytes);
-        String signature = signatureBase64URL.toString();
-
-        // Create the detached JWT proof: header64 + '..' + signature
-        String proof = header64 + OpenID4VPConstants.DETACHED_JWT_SEPARATOR + signature;
-
-        Map<String, Object> signingResultData = new HashMap<>();
-        signingResultData.put(OpenID4VPConstants.JWS, proof);
-        signingResultData.put(OpenID4VPConstants.PROOF_VALUE, null);
-        signingResultData.put(OpenID4VPConstants.SIGNATURE_ALGORITHM, DEFAULT_SIGNATURE_SUITE);
-
-        return objectMapper.convertValue(signingResultData, LdpVPTokenSigningResult.class);
+        }).toList();
     }
 
     /**
@@ -359,66 +324,101 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
         return sessionData.getMatchingCredentials().stream().filter(credential -> selectedCredentialIds.contains(credential.getId())).collect(Collectors.toList());
     }
 
-    /**
-     * Constructs unsigned VP token using the OpenID4VP JAR
-     */
-    private Map<FormatType, UnsignedVPToken> constructUnsignedVPToken(OpenID4VP openID4VP, List<DecryptedCredentialDTO> credentials, JWK jwk) throws JsonProcessingException {
-
-        log.debug("Constructing unsigned VP token for {} credentials", credentials.size());
-
-        Map<String, Map<FormatType, List<Object>>> verifiableCredentials = convertCredentialsToJarFormat(credentials);
-        String holderId = resolveHolderId(jwk);
-        return openID4VP.constructUnsignedVPToken(verifiableCredentials, holderId, DEFAULT_SIGNATURE_SUITE);
-
+    private List<String> resolveSelectedCredentialIds(SubmitPresentationRequestDTO request) {
+        if (request.getSelectedCredentials() != null && !request.getSelectedCredentials().isEmpty()) {
+            return request.getSelectedCredentials();
+        }
+        if (request.getSelectedCredentialMappings() != null && !request.getSelectedCredentialMappings().isEmpty()) {
+            return request.getSelectedCredentialMappings().stream()
+                    .map(SelectedCredentialMapping::getCredentialId)
+                    .distinct()
+                    .toList();
+        }
+        return Collections.emptyList();
     }
 
-    /**
-     * Resolves holderId from the user's public key using JWK format
-     */
-    private String resolveHolderId(JWK jwk) throws JsonProcessingException {
+    private Map<String, List<Credential>> buildSelectedCredentialsForJar(
+            OpenID4VP openID4VP,
+            VerifiablePresentationSessionData sessionData,
+            List<DecryptedCredentialDTO> selectedCredentials,
+            SubmitPresentationRequestDTO request,
+            JWK jwk
+    ) throws JsonProcessingException, ApiNotAccessibleException, IOException {
+        if (sessionData == null || sessionData.getSpecVersion() == null) {
+            throw new IllegalStateException("Missing specVersion in session; restart presentation flow");
+        }
+        List<Credential> jarCredentials = selectedCredentials.stream()
+                .map(this::toJarCredential)
+                .toList();
 
-        // Convert JWK to JSON string
-        String jwkJson = objectMapper.writeValueAsString(jwk.toPublicJWK().toJSONObject());
-
-        // Base64URL encode the JWK JSON
-        String base64UrlEncodedJwk = EncoderKt.encodeToBase64Url(jwkJson.getBytes(StandardCharsets.UTF_8));
-
-        // Construct holderId: did:jwk:{base64url(jwk)}#0
-        return OpenID4VPConstants.DID_JWK_PREFIX + base64UrlEncodedJwk + OpenID4VPConstants.DID_KEY_FRAGMENT;
-    }
-
-    /**
-     * Converts DecryptedCredentialDTO list to the format expected by the OpenID4VP JAR
-     * Extracts the inner credential data from VCCredentialResponse wrapper to remove the "credential" wrapper
-     */
-    private Map<String, Map<FormatType, List<Object>>> convertCredentialsToJarFormat(List<DecryptedCredentialDTO> credentials) {
-
-        return credentials.stream().collect(Collectors.groupingBy(DecryptedCredentialDTO::getId, Collectors.collectingAndThen(Collectors.toList(), credList -> credList.stream().collect(Collectors.groupingBy(credential -> {
-            // Get format and credential data
-            VCCredentialResponse vcCredentialResponse = credential.getCredential();
-            String credentialFormat = vcCredentialResponse.getFormat();
-            // Convert format string to FormatType enum
-            return mapStringToFormatType(credentialFormat);
-        }, Collectors.mapping(credential -> credential.getCredential().getCredential(), Collectors.toList()))))));
-    }
-
-    /**
-     * Maps format string to FormatType enum
-     * Only ldp_vc format is supported. Throws InvalidRequestException for other formats.
-     */
-    private FormatType mapStringToFormatType(String format) {
-        if (format == null) {
-            log.error("Credential format is null");
-            throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), "Credential format is required. Only ldp_vc format is supported.");
+        if ("v1".equalsIgnoreCase(sessionData.getSpecVersion())) {
+            // v1 requires mapping credentialQueryId -> credentials
+            List<SelectedCredentialMapping> mappings = request.getSelectedCredentialMappings();
+            if (mappings == null || mappings.isEmpty()) {
+                throw new IllegalArgumentException("selectedCredentialMappings is required for OVP v1 submissions");
+            }
+            Map<String, List<Credential>> byQueryId = new HashMap<>();
+            for (SelectedCredentialMapping mapping : mappings) {
+                Credential cred = jarCredentials.stream()
+                        .filter(c -> c.getCredentialId().equals(mapping.getCredentialId()))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException("Selected credential not found in session cache: " + mapping.getCredentialId()));
+                byQueryId.computeIfAbsent(mapping.getCredentialQueryId(), k -> new ArrayList<>()).add(cred);
+            }
+            return byQueryId;
         }
 
+        // draft-23: map inputDescriptorId -> credentials. We derive descriptor matches on submit.
+        var presentationDefinition = openID4VPService.resolvePresentationDefinition(
+                sessionData.getPresentationId(),
+                sessionData.getAuthorizationRequest(),
+                sessionData.isVerifierClientPreregistered()
+        );
+        if (presentationDefinition == null || presentationDefinition.getInputDescriptors() == null) {
+            throw new IllegalStateException("Unable to resolve presentation definition for submission");
+        }
+
+        Map<String, List<Credential>> byInputDescriptorId = new HashMap<>();
+        for (var descriptor : presentationDefinition.getInputDescriptors()) {
+            List<Credential> credsForDescriptor = selectedCredentials.stream()
+                    .filter(dc -> credentialMatchingService instanceof CredentialMatchingServiceImpl impl
+                            ? impl.matchesInputDescriptorForSubmission(dc.getCredential(), descriptor)
+                            : true)
+                    .map(this::toJarCredential)
+                    .toList();
+            if (!credsForDescriptor.isEmpty()) {
+                byInputDescriptorId.put(descriptor.getId(), credsForDescriptor);
+            }
+        }
+        return byInputDescriptorId;
+    }
+
+    private Credential toJarCredential(DecryptedCredentialDTO decrypted) {
+        VCCredentialResponse vcCredentialResponse = decrypted.getCredential();
+        String credentialFormat = vcCredentialResponse.getFormat();
+        FormatType formatType = mapStringToFormatType(credentialFormat);
+        Object data = vcCredentialResponse.getCredential();
+        return new Credential(formatType, data, decrypted.getId());
+    }
+
+    private FormatType mapStringToFormatType(String format) {
+        if (format == null) {
+            throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), "Credential format is required.");
+        }
         String formatLower = format.toLowerCase();
         if (CredentialFormat.LDP_VC.getFormat().equals(formatLower)) {
             return FormatType.LDP_VC;
         }
-
-        log.error("Unsupported credential format: {}. Only ldp_vc format is supported.", format);
-        throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), "Unsupported credential format: " + format + ". Only ldp_vc format is supported.");
+        if (CredentialFormat.DC_SD_JWT.getFormat().equals(formatLower)) {
+            return FormatType.DC_SD_JWT;
+        }
+        if (CredentialFormat.VC_SD_JWT.getFormat().equals(formatLower)) {
+            return FormatType.VC_SD_JWT;
+        }
+        if ("mso_mdoc".equalsIgnoreCase(formatLower)) {
+            return FormatType.MSO_MDOC;
+        }
+        throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), "Unsupported credential format: " + format);
     }
 
     /**
@@ -492,6 +492,9 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
         try {
             Map<String, Object> presentationData = new HashMap<>();
             presentationData.put(OpenID4VPConstants.SELECTED_CREDENTIALS, request.getSelectedCredentials());
+            if (request.getSelectedCredentialMappings() != null) {
+                presentationData.put("selectedCredentialMappings", request.getSelectedCredentialMappings());
+            }
 
             return objectMapper.writeValueAsString(presentationData);
         } catch (Exception e) {
@@ -510,7 +513,9 @@ public class WalletPresentationServiceImpl implements WalletPresentationService 
             throw new IllegalArgumentException("Request cannot be null");
         }
 
-        if (request.getSelectedCredentials() == null || request.getSelectedCredentials().isEmpty()) {
+        boolean hasDraft23Selection = request.getSelectedCredentials() != null && !request.getSelectedCredentials().isEmpty();
+        boolean hasV1Selection = request.getSelectedCredentialMappings() != null && !request.getSelectedCredentialMappings().isEmpty();
+        if (!hasDraft23Selection && !hasV1Selection) {
             log.error("Selected credentials cannot be null or empty");
             throw new IllegalArgumentException("Selected credentials cannot be null or empty");
         }

@@ -5,12 +5,16 @@ import io.mosip.mimoto.dto.resident.VerifiablePresentationSessionData;
 import io.mosip.mimoto.exception.ApiNotAccessibleException;
 import io.mosip.mimoto.service.VerifierService;
 import io.mosip.openID4VP.OpenID4VP;
+import io.mosip.openID4VP.authorizationRequest.AuthorizationPresentationExchangeRequest;
 import io.mosip.openID4VP.authorizationRequest.AuthorizationRequest;
-import io.mosip.openID4VP.authorizationRequest.VPFormatSupported;
+import io.mosip.openID4VP.authorizationRequest.LdpVcFormatSupported;
+import io.mosip.openID4VP.authorizationRequest.SdJwtVcFormatSupported;
 import io.mosip.openID4VP.authorizationRequest.Verifier;
-import io.mosip.openID4VP.authorizationRequest.WalletMetadata;
+import io.mosip.openID4VP.authorizationRequest.WalletConfig;
 import io.mosip.openID4VP.authorizationRequest.presentationDefinition.PresentationDefinition;
 import io.mosip.openID4VP.common.OpenID4VPErrorCodes;
+import io.mosip.openID4VP.constants.ClientIdPrefix;
+import io.mosip.openID4VP.constants.ProofType;
 import io.mosip.openID4VP.constants.VPFormatType;
 import io.mosip.openID4VP.exceptions.OpenID4VPExceptions;
 import io.mosip.openID4VP.verifier.VerifierResponse;
@@ -33,13 +37,18 @@ public class OpenID4VPService {
     }
 
     public OpenID4VP create(String presentationId) {
-        WalletMetadata walletMetadata = new WalletMetadata();
-        walletMetadata.setVpFormatsSupported(Map.of(VPFormatType.LDP_VC, new VPFormatSupported(List.of("EEd25519Signature2020"))));
-
-        return new OpenID4VP(
-                presentationId,
-                walletMetadata
+        Map<VPFormatType, io.mosip.openID4VP.authorizationRequest.VPFormatSupported> vpFormatsSupported = Map.of(
+                VPFormatType.LDP_VC, new LdpVcFormatSupported(List.of(ProofType.JsonWebSignature2020), List.of()),
+                VPFormatType.DC_SD_JWT, new SdJwtVcFormatSupported(List.of("EdDSA"), List.of("EdDSA")),
+                VPFormatType.VC_SD_JWT, new SdJwtVcFormatSupported(List.of("EdDSA"), List.of("EdDSA"))
         );
+
+        WalletConfig walletConfig = new WalletConfig(
+                vpFormatsSupported,
+                List.of(ClientIdPrefix.PRE_REGISTERED, ClientIdPrefix.REDIRECT_URI, ClientIdPrefix.DECENTRALIZED_IDENTIFIER)
+        );
+
+        return new OpenID4VP(presentationId, walletConfig);
     }
 
     /**
@@ -58,7 +67,10 @@ public class OpenID4VPService {
                 .toList();
 
         AuthorizationRequest authorizationRequest = openID4VP.authenticateVerifier(authRequest, preRegisteredVerifiers, isVerifierClientPreregistered);
-        return authorizationRequest.getPresentationDefinition();
+        if (authorizationRequest instanceof AuthorizationPresentationExchangeRequest presentationExchangeRequest) {
+            return presentationExchangeRequest.getPresentationDefinition();
+        }
+        return null;
     }
 
     /**

@@ -22,6 +22,12 @@ public class SubmitPresentationRequestDTO {
             example = "[\"cred-123\", \"cred-456\"]")
     private List<String> selectedCredentials;
 
+    @Schema(
+            description = "OVP v1: list of selected credentials along with their DCQL credentialQueryId mapping",
+            example = "[{\"credentialId\":\"cred-123\",\"credentialQueryId\":\"identity_verification\"}]"
+    )
+    private List<SelectedCredentialMapping> selectedCredentialMappings;
+
     @Schema(description = "Error code for rejecting the verifier (used when user denies the presentation request)", 
             example = "access_denied")
     private String errorCode;
@@ -34,7 +40,8 @@ public class SubmitPresentationRequestDTO {
      * Checks if this is a submission request (has selected credentials and NO error fields)
      */
     public boolean isSubmissionRequest() {
-        boolean hasCredentials = selectedCredentials != null && !selectedCredentials.isEmpty();
+        boolean hasCredentials = (selectedCredentials != null && !selectedCredentials.isEmpty())
+                || (selectedCredentialMappings != null && !selectedCredentialMappings.isEmpty());
         boolean hasErrorFields = (errorCode != null && !errorCode.trim().isEmpty()) || 
                                  (errorMessage != null && !errorMessage.trim().isEmpty());
         return hasCredentials && !hasErrorFields;
@@ -46,7 +53,8 @@ public class SubmitPresentationRequestDTO {
     public boolean isRejectionRequest() {
         boolean hasErrorFields = errorCode != null && !errorCode.trim().isEmpty() && 
                                 errorMessage != null && !errorMessage.trim().isEmpty();
-        boolean hasCredentials = selectedCredentials != null && !selectedCredentials.isEmpty();
+        boolean hasCredentials = (selectedCredentials != null && !selectedCredentials.isEmpty())
+                || (selectedCredentialMappings != null && !selectedCredentialMappings.isEmpty());
         return hasErrorFields && !hasCredentials;
     }
 }

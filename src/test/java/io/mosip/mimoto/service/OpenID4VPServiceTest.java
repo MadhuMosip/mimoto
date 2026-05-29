@@ -8,6 +8,7 @@ import io.mosip.mimoto.dto.ErrorDTO;
 import io.mosip.mimoto.exception.ApiNotAccessibleException;
 import io.mosip.mimoto.service.impl.OpenID4VPService;
 import io.mosip.openID4VP.OpenID4VP;
+import io.mosip.openID4VP.authorizationRequest.AuthorizationPresentationExchangeRequest;
 import io.mosip.openID4VP.authorizationRequest.AuthorizationRequest;
 import io.mosip.openID4VP.authorizationRequest.presentationDefinition.PresentationDefinition;
 import io.mosip.openID4VP.common.OpenID4VPErrorCodes;
@@ -46,7 +47,7 @@ public class OpenID4VPServiceTest {
 
     private VerifiersDTO mockVerifiersDTO;
     private VerifierDTO mockVerifierDTO;
-    private AuthorizationRequest mockAuthorizationRequest;
+    private AuthorizationPresentationExchangeRequest mockAuthorizationRequest;
     private PresentationDefinition mockPresentationDefinition;
 
     @Before
@@ -65,8 +66,8 @@ public class OpenID4VPServiceTest {
                 .build();
 
 
-        // Setup mock AuthorizationRequest
-        mockAuthorizationRequest = mock(AuthorizationRequest.class);
+        // Setup mock AuthorizationRequest (draft-23 / Presentation Exchange)
+        mockAuthorizationRequest = mock(AuthorizationPresentationExchangeRequest.class);
 
         // Setup mock PresentationDefinition
         mockPresentationDefinition = mock(PresentationDefinition.class);

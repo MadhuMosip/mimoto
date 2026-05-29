@@ -144,7 +144,7 @@
         <dependency>
             <groupId>io.inji</groupId>
             <artifactId>inji-openid4vp-jar</artifactId>
-            <version>0.7.0</version>
+            <version>0.7.0-SNAPSHOT-myLocal</version>
         </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
@@ -549,6 +549,10 @@
         <repository>
             <id>danubetech-maven-public</id>
             <url>https://repo.danubetech.com/repository/maven-public/</url>
+        </repository>
+        <repository>
+            <id>local</id>
+            <url>file://${user.home}/.m2/repository</url>
         </repository>
     </repositories>
 

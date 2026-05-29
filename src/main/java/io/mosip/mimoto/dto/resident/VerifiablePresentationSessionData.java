@@ -15,6 +15,11 @@ import java.util.List;
 public class VerifiablePresentationSessionData implements Serializable {
     private String presentationId;
     private String authorizationRequest;
+    /**
+     * OpenID4VP spec version associated with this presentation session.
+     * Expected values: "draft-23" | "v1"
+     */
+    private String specVersion;
     private Instant createdAt;
     private boolean isVerifierClientPreregistered;
     private List<DecryptedCredentialDTO> matchingCredentials;

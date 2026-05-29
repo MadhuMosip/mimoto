@@ -82,15 +82,20 @@ public class SessionManager {
     public void storeMatchingWalletCredentialsInPresentationSessionData(HttpSession httpSession, String walletId, VerifiablePresentationSessionData existingSessionData, List<DecryptedCredentialDTO> credentials) {
         VerifiablePresentationSessionData updatedSessionData = new VerifiablePresentationSessionData(existingSessionData.getPresentationId(),
                 existingSessionData.getAuthorizationRequest(),
+                existingSessionData.getSpecVersion(),
                 existingSessionData.getCreatedAt(),
                 existingSessionData.isVerifierClientPreregistered(),
                 credentials
         );
 
         // Update the presentations map with the updated session data
-        Map<String, VerifiablePresentationSessionData> presentations = (Map<String, VerifiablePresentationSessionData>) httpSession.getAttribute(SessionKeys.PRESENTATIONS + "::" + walletId);
+        Map<String, VerifiablePresentationSessionData> presentations =
+                (Map<String, VerifiablePresentationSessionData>) httpSession.getAttribute(SessionKeys.PRESENTATIONS + "::" + walletId);
+        if (presentations == null) {
+            presentations = new HashMap<>();
+        }
         presentations.put(updatedSessionData.getPresentationId(), updatedSessionData);
-        httpSession.setAttribute(SessionKeys.PRESENTATIONS  + "::" + walletId, presentations);
+        httpSession.setAttribute(SessionKeys.PRESENTATIONS + "::" + walletId, presentations);
     }
 
     /**

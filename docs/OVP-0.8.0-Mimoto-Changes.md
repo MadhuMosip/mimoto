@@ -35,6 +35,8 @@ POST /wallets/{id}/presentations
 
 ### 🟢 AFTER (0.8.0)
 
+> **Library update:** `validatePreRegisteredVerifier` is now on `WalletConfig` (was `shouldValidateClient` on `authenticateVerifier`).
+
 ```
 POST /wallets/{id}/presentations
   Body: { authorizationRequestUrl: "openid4vp://..." }
@@ -44,25 +46,24 @@ POST /wallets/{id}/presentations
   │
   ├─① getPreRegisteredVerifiers()  → List<Verifier>
   │
-  ├─② OpenID4VPService.create(presentationId, trustedVerifiers)
-  │       └─ new WalletConfig(..., trustedVerifiers)
-  │               ↑ verifiers now INSIDE WalletConfig at creation time
+  ├─② shouldValidateClient = isVerifierClientPreregistered(verifiers, url)
+  │
+  ├─③ OpenID4VPService.create(presentationId, trustedVerifiers, shouldValidateClient)
+  │       └─ new WalletConfig(..., trustedVerifiers, validatePreRegisteredVerifier)
   │       └─ new OpenID4VP(id, walletConfig)
   │
-  ├─③ openID4VP.authenticateVerifier(
-  │         urlString,
-  │         shouldValidate            ← only 2 args, no trustedVerifiers
-  │     )
+  ├─④ openID4VP.authenticateVerifier(urlString)   ← 1 arg only
   │       └─ returns AuthorizationRequest subtype
   │
-  ├─④ detect spec version
+  ├─⑤ detect spec version
   │         if (authReq instanceof AuthorizationDcqlRequest)
   │               → specVersion = V1_0
   │         else
   │               → specVersion = DRAFT_23
   │
-  └─⑤ store in session:
+  └─⑥ store in session:
             presentationId, authorizationRequest, specVersion, isPreRegistered
+            (isPreRegistered replayed as validatePreRegisteredVerifier on later create() calls)
 ```
 
 ---
@@ -71,16 +72,17 @@ POST /wallets/{id}/presentations
 
 | # | What changes | Mimoto file | Type |
 |---|-------------|-------------|------|
-| 1 | `create()` now takes `trustedVerifiers` as second arg | `OpenID4VPService.java` | Fix |
-| 2 | `WalletConfig` replaces `WalletMetadata`; verifiers go inside it | `OpenID4VPService.java` | Fix |
-| 3 | `authenticateVerifier` drops the middle `trustedVerifiers` arg | `WalletPresentationServiceImpl.java` | Fix |
+| 1 | `create()` takes `trustedVerifiers` + `validatePreRegisteredVerifier` | `OpenID4VPService.java` | Fix |
+| 2 | `WalletConfig` replaces `WalletMetadata`; verifiers + validation flag inside it | `OpenID4VPService.java` | Fix |
+| 3 | `authenticateVerifier(url)` — 1 arg only; no `shouldValidateClient` param | `WalletPresentationServiceImpl.java` | Fix |
 | 4 | Spec version is detected from the `AuthorizationRequest` subtype | `WalletPresentationServiceImpl.java` | New |
 | 5 | `specVersion` field stored in session | `VerifiablePresentationSessionData.java` | New |
 
 > **Summary**
 > This is the entry point of the entire VP flow. The wallet receives the verifier's authorization request URL, validates who the verifier is, and sets up the session for all subsequent calls.
-> The two key problems fixed here are:
-> - In 0.7.0, trusted verifiers were passed directly as a method argument to `authenticateVerifier()` — the 0.8.0 library removed that argument, so they must now live inside `WalletConfig` at creation time.
+> The key library moves for 0.8.0:
+> - `trustedVerifiers` and `validatePreRegisteredVerifier` (formerly `shouldValidateClient`) now live in `WalletConfig` at `create()` time — compute `shouldValidateClient` from the URL **before** calling `create()`.
+> - `authenticateVerifier()` is a 1-arg call; the library reads validation behaviour from `WalletConfig`.
 > - 0.8.0 introduces two spec versions (Draft-23 and OVP 1.0 / DCQL). Mimoto detects which one the verifier is using by inspecting the returned `AuthorizationRequest` subtype (`AuthorizationDcqlRequest` → `V1_0`, anything else → `DRAFT_23`) and stores it as `specVersion` in the session. Every downstream call uses this value to pick the right code path. If `specVersion` is somehow absent (e.g. older session data), the fallback is `V1_0`.
 
 ---
@@ -126,7 +128,7 @@ GET /wallets/{id}/presentations/{pid}/credentials
   ├─ session.specVersion == DRAFT_23  (explicit only — null defaults to V1_0)
   │
   ├─ openID4VPService.resolvePresentationDefinition(presentationId, authRequest, preReg)
-  │       └─ authenticateVerifier now called with 2 args
+  │       └─ create(..., preReg) → authenticateVerifier(url) — 1 arg
   │       └─ cast to AuthorizationPresentationExchangeRequest
   │       └─ return presentationDefinition
   │
@@ -156,7 +158,7 @@ GET /wallets/{id}/presentations/{pid}/credentials
   ├─ session.specVersion == V1_0
   │
   ├─ openID4VPService.resolveDcqlQuery(presentationId, authRequest, preReg)
-  │       └─ create(id, verifiers) → authenticateVerifier(url, shouldValidate)
+  │       └─ create(id, verifiers, preReg) → authenticateVerifier(url)
   │       └─ cast to AuthorizationDcqlRequest
   │       └─ return dcqlQuery
   │
@@ -191,7 +193,7 @@ GET /wallets/{id}/presentations/{pid}/credentials
 
 | # | What changes | Mimoto file | Type |
 |---|-------------|-------------|------|
-| 1 | `resolvePresentationDefinition()` fixes `authenticateVerifier` to 2 args | `OpenID4VPService.java` | Fix |
+| 1 | `resolvePresentationDefinition()` passes `validatePreRegisteredVerifier` via `create()`; `authenticateVerifier` 1 arg | `OpenID4VPService.java` | Fix |
 | 2 | `descriptorId` recorded on each matched DTO during Draft-23 matching | `CredentialMatchingServiceImpl.java` | Fix |
 | 3 | Top-level routing by `specVersion` added | `CredentialMatchingServiceImpl.java` | New |
 | 4 | `resolveDcqlQuery()` new method to extract `DCQLQuery` | `OpenID4VPService.java` | New |
@@ -610,7 +612,7 @@ PATCH /wallets/{id}/presentations/{pid}
   │
   ├─① fetchSelectedCredentials(sessionData, selectedIds)
   │
-  ├─② create(presentationId) + authenticateVerifier(url, verifiers, isPreReg)
+  ├─② create(presentationId, verifiers, isPreReg) + authenticateVerifier(url)
   │                                                        ↑ 3 args — broken in 0.8.0
   │
   ├─③ convertCredentialsToJarFormat()
@@ -641,7 +643,7 @@ PATCH /wallets/{id}/presentations/{pid}
   │       └─ each DecryptedCredentialDTO has .descriptorId set from matching step
   │
   ├─② create(presentationId, verifiers)
-  │   openID4VP.authenticateVerifier(authRequest, shouldValidateClient)   ← 2 args (fixed)
+  │   create(..., isPreReg) → authenticateVerifier(authRequest)   ← 1 arg (fixed)
   │
   ├─③ buildDescriptorCredentialMap(selectedCredentials)
   │       input:  List<DecryptedCredentialDTO>
@@ -691,7 +693,7 @@ PATCH /wallets/{id}/presentations/{pid}
   │           e.g. { "pid_query": [Credential(...)], "mdl_query": [Credential(...)] }
   │
   ├─③ create(presentationId, verifiers)
-  │   openID4VP.authenticateVerifier(authRequest, shouldValidateClient)
+  │   create(..., isPreReg) → authenticateVerifier(authRequest)
   │
   ├─④ openID4VP.constructUnsignedVPToken(queryCredentialMap)
   │       same library call as Draft-23
@@ -711,7 +713,7 @@ PATCH /wallets/{id}/presentations/{pid}
 
 | # | What changes | Mimoto file | Type |
 |---|-------------|-------------|------|
-| 1 | `authenticateVerifier` fixed to 2 args | `WalletPresentationServiceImpl.java` | Fix |
+| 1 | `create(..., isPreReg)` + `authenticateVerifier` 1 arg | `WalletPresentationServiceImpl.java` | Fix |
 | 2 | `convertCredentialsToJarFormat()` replaced by `buildDescriptorCredentialMap()` — map key changed from `dto.getId()` to `dto.getDescriptorId()` | `WalletPresentationServiceImpl.java` | Fix |
 | 3 | Submission branches by `request.isDcqlSubmission()` | `WalletPresentationServiceImpl.java` | New |
 | 4 | `validateDcqlSelections()` enforces DCQL constraints | `WalletPresentationServiceImpl.java` | New |
@@ -852,8 +854,8 @@ PATCH /wallets/{id}/presentations/{pid}
   │
   └─ openID4VPService.sendErrorToVerifier(sessionData, errorPayload)
           │
-          ├─ create(presentationId, preRegisteredVerifiers)
-          ├─ openID4VP.authenticateVerifier(authRequest, shouldValidateClient)  ← 2 args (fixed)
+          ├─ create(presentationId, preRegisteredVerifiers, isPreReg)
+          ├─ authenticateVerifier(authRequest)  ← 1 arg (fixed)
           ├─ map errorCode → OpenID4VPException
           │       access_denied           → AccessDenied
           │       invalid_transaction_data → InvalidTransactionData
@@ -867,11 +869,11 @@ PATCH /wallets/{id}/presentations/{pid}
 
 | # | What changes | Mimoto file | Type |
 |---|-------------|-------------|------|
-| 1 | `authenticateVerifier` fixed to 2 args | `OpenID4VPService.java` | Fix |
+| 1 | `create(..., validatePreRegisteredVerifier)` + `authenticateVerifier` 1 arg | `OpenID4VPService.java` | Fix |
 
 > **Summary**
 > This flow handles the case where the user declines to share credentials and the wallet must notify the verifier.
-> The only change here is the same `authenticateVerifier` 3-arg → 2-arg fix applied inside `OpenID4VPService.sendErrorToVerifier()`. The reason `authenticateVerifier` must be called at all on the rejection path is that the `OpenID4VP` library object is stateless between HTTP calls — it must re-authenticate the verifier to populate its internal state before it can send anything, including an error. Without this re-authentication call the library does not know where to send the error response.
+> The change here is the same as other flows: pass `validatePreRegisteredVerifier` via `create()`, then call `authenticateVerifier(authRequest)` with 1 arg. The reason `authenticateVerifier` must be called at all on the rejection path is that the `OpenID4VP` library object is stateless between HTTP calls — it must re-authenticate the verifier to populate its internal state before it can send anything, including an error. Without this re-authentication call the library does not know where to send the error response.
 
 ---
 
@@ -882,8 +884,8 @@ PATCH /wallets/{id}/presentations/{pid}
 | File | What changes |
 |------|-------------|
 | `pom.xml` | Library version `0.7.0-SNAPSHOT-myLocal` → `0.8.0-myLocal` |
-| `OpenID4VPService.java` | `WalletConfig` replaces `WalletMetadata` · `authenticateVerifier` 2-arg fix in all call sites · new `resolveDcqlQuery()` method |
-| `WalletPresentationServiceImpl.java` | `authenticateVerifier` 2-arg fix · `buildDescriptorCredentialMap()` replaces `convertCredentialsToJarFormat()` · DCQL submission branch · `validateDcqlSelections()` · `buildQueryCredentialMap()` |
+| `OpenID4VPService.java` | `WalletConfig` replaces `WalletMetadata` · `validatePreRegisteredVerifier` in config · `authenticateVerifier` 1-arg · new `resolveDcqlQuery()` method |
+| `WalletPresentationServiceImpl.java` | `create(..., isPreReg)` + `authenticateVerifier` 1-arg · `buildDescriptorCredentialMap()` replaces `convertCredentialsToJarFormat()` · DCQL submission branch · `validateDcqlSelections()` · `buildQueryCredentialMap()` |
 | `CredentialMatchingServiceImpl.java` | `specVersion` routing · `descriptorId` recording in Draft-23 matching · new `matchDcql()` branch · `matchesDcqlQuery()` helper |
 | `VerifiablePresentationSessionData.java` | Add `specVersion` field (`DRAFT_23` or `V1_0`); default when null is `V1_0` |
 | `DecryptedCredentialDTO.java` | Add `descriptorId` field (bridge key from matching → submission) |
@@ -902,6 +904,6 @@ PATCH /wallets/{id}/presentations/{pid}
 
 | File | What changes |
 |------|-------------|
-| `OpenID4VPServiceTest.java` | Remove middle `anyList()` arg from all `authenticateVerifier` mocks |
+| `OpenID4VPServiceTest.java` | `create()` takes `validatePreRegisteredVerifier` · `authenticateVerifier` mocked as 1-arg |
 | `WalletPresentationServiceTest.java` | Update mocks · add DCQL submission test · add constraint validation test |
 | `CredentialMatchingServiceTest.java` | Add explicit `specVersion = DRAFT_23` to Draft-23 test setups (null now defaults to V1_0) · add DCQL matching tests |

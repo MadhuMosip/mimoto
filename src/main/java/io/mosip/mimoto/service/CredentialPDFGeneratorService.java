@@ -156,7 +156,7 @@ public class CredentialPDFGeneratorService {
         String selectedFaceKey = selectedFace.key();
 
         Set<String> disclosures;
-        if (CredentialFormat.VC_SD_JWT.getFormat().equals(vcCredentialResponse.getFormat())) {
+        if (CredentialFormat.isSdJwt(vcCredentialResponse.getFormat())) {
             SDJWT sdjwt = SDJWT.parse((String) vcCredentialResponse.getCredential());
             disclosures = sdjwt.getDisclosures().stream()
                     .map(Disclosure::getClaimName)
@@ -199,7 +199,7 @@ public class CredentialPDFGeneratorService {
         }
 
         // is sd-jwt and has disclosures
-        boolean isSdJwtWithDisclosures = CredentialFormat.VC_SD_JWT.getFormat().equals(vcCredentialResponse.getFormat()) && CollectionUtils.isNotEmpty(disclosures);
+        boolean isSdJwtWithDisclosures = CredentialFormat.isSdJwt(vcCredentialResponse.getFormat()) && CollectionUtils.isNotEmpty(disclosures);
 
         data.put("isMaskedOn", maskDisclosures);
         data.put("isSdJwtWithDisclosures", isSdJwtWithDisclosures);

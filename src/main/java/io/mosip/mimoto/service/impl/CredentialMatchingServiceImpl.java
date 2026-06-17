@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.PathNotFoundException;
 import io.mosip.mimoto.constant.CredentialFormat;
-import io.mosip.mimoto.dto.DecryptedCredentialDTO;
-import io.mosip.mimoto.dto.MatchingCredentialsResponseDTO;
-import io.mosip.mimoto.dto.MatchingCredentialsDTO;
+import io.mosip.mimoto.constant.SpecVersion;
 import io.mosip.mimoto.dto.CredentialDTO;
+import io.mosip.mimoto.dto.DecryptedCredentialDTO;
+import io.mosip.mimoto.dto.DcqlQueryGroup;
+import io.mosip.mimoto.dto.MatchingCredentialsDTO;
+import io.mosip.mimoto.dto.MatchingCredentialsResponseDTO;
 import io.mosip.mimoto.dto.mimoto.IssuerConfig;
 import io.mosip.mimoto.dto.mimoto.VCCredentialProperties;
 import io.mosip.mimoto.dto.mimoto.VCCredentialResponse;
@@ -16,16 +18,22 @@ import io.mosip.mimoto.dto.resident.VerifiablePresentationSessionData;
 import io.mosip.mimoto.exception.ApiNotAccessibleException;
 import io.mosip.mimoto.exception.InvalidIssuerIdException;
 import io.mosip.mimoto.exception.InvalidRequestException;
-import io.mosip.mimoto.service.CredentialFormatHandlerFactory;
 import io.mosip.mimoto.service.CredentialFormatHandler;
+import io.mosip.mimoto.service.CredentialFormatHandlerFactory;
 import io.mosip.mimoto.service.CredentialMatchingService;
 import io.mosip.mimoto.service.IssuersService;
 import io.mosip.mimoto.service.WalletCredentialService;
 import io.mosip.mimoto.util.JwtUtils;
+import io.mosip.openID4VP.dcql.query.ClaimValue;
+import io.mosip.openID4VP.dcql.query.ClaimsQuery;
+import io.mosip.openID4VP.dcql.query.CredentialQuery;
+import io.mosip.openID4VP.dcql.query.CredentialSetQuery;
+import io.mosip.openID4VP.dcql.query.DCQLQuery;
 import io.mosip.openID4VP.authorizationRequest.presentationDefinition.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import static io.mosip.mimoto.exception.ErrorConstants.INVALID_REQUEST;
 import static io.mosip.mimoto.exception.ErrorConstants.UNSUPPORTED_FORMAT;
 
 import java.io.IOException;
@@ -46,6 +54,10 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
     private static final String ALG = "alg";
     private static final String CREDENTIAL_SUBJECT = "credentialSubject";
     private static final String SD = "_sd";
+    private static final String META_VCT_VALUES = "vct_values";
+    private static final String META_TYPE_VALUES = "type_values";
+    private static final String TYPE = "type";
+    private static final String VCT = "vct";
 
     private final ObjectMapper objectMapper;
 
@@ -67,68 +79,386 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
 
 
     @Override
-    public MatchingCredentialsDTO getMatchingCredentials(VerifiablePresentationSessionData sessionData, String walletId, String base64Key) throws ApiNotAccessibleException, IOException {
-        log.info("Getting matching credentials with wallet data for walletId: {}", walletId);
+    public MatchingCredentialsDTO getMatchingCredentials(
+            VerifiablePresentationSessionData sessionData,
+            String walletId,
+            String base64Key) throws ApiNotAccessibleException, IOException {
 
-        // Extract presentation definition from the session data
-        PresentationDefinition presentationDefinition = openID4VPService.resolvePresentationDefinition(sessionData.getPresentationId(), sessionData.getAuthorizationRequest(), sessionData.isVerifierClientPreregistered());
+        log.info("getMatchingCredentials: walletId={}, specVersion={}",
+                walletId, sessionData != null ? sessionData.getSpecVersion() : "null");
+
+        List<DecryptedCredentialDTO> decryptedCredentials =
+                walletCredentialService.getDecryptedCredentials(walletId, base64Key);
+
+        // Route to the correct matching path based on the spec version stored in session.
+        // When specVersion is null (old sessions or first deploy), default to Draft-23.
+        if (sessionData != null && SpecVersion.V1_0.equals(sessionData.getSpecVersion())) {
+            return matchWithDcqlQuery(sessionData, walletId, decryptedCredentials);
+        }
+        return matchWithPresentationDefinition(sessionData, walletId, base64Key, decryptedCredentials);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Draft-23 — Presentation Definition matching
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Matches wallet credentials against each {@link InputDescriptor} in the verifier's
+     * {@link PresentationDefinition}.
+     *
+     * <p>Sets {@link DecryptedCredentialDTO#setDescriptorId} on every matched credential
+     * so the submission step can use the correct key when calling
+     * {@code openID4VP.constructUnsignedVPToken(Map<descriptorId, List<Credential>>)}.
+     */
+    private MatchingCredentialsDTO matchWithPresentationDefinition(
+            VerifiablePresentationSessionData sessionData,
+            String walletId,
+            String base64Key,
+            List<DecryptedCredentialDTO> decryptedCredentials)
+            throws ApiNotAccessibleException, IOException {
+
+        PresentationDefinition presentationDefinition = openID4VPService.resolvePresentationDefinition(
+                sessionData.getPresentationId(),
+                sessionData.getAuthorizationRequest(),
+                sessionData.isVerifierClientPreregistered());
 
         validateInputParameters(presentationDefinition, walletId, base64Key);
 
-        List<DecryptedCredentialDTO> decryptedCredentials = walletCredentialService.getDecryptedCredentials(walletId, base64Key);
         if (decryptedCredentials.isEmpty()) {
-            MatchingCredentialsResponseDTO emptyResponse = createEmptyResponseWithMissingClaims(presentationDefinition);
             return MatchingCredentialsDTO.builder()
-                    .matchingCredentialsResponse(emptyResponse)
+                    .matchingCredentialsResponse(createEmptyResponseWithMissingClaims(presentationDefinition))
                     .matchingCredentials(new ArrayList<>())
                     .build();
         }
 
         List<InputDescriptor> descriptors = presentationDefinition.getInputDescriptors();
-        Map<Integer, List<CredentialDTO>> matchingCredentialsByDescriptor = new HashMap<>();
+        Map<Integer, List<CredentialDTO>> matchesByDescriptor = new HashMap<>();
         Set<String> missingClaims = new HashSet<>();
+        // Records which InputDescriptor.id each credential satisfies.
+        Map<String, String> credentialToDescriptor = new HashMap<>();
 
-        IntStream.range(0, descriptors.size())
-                .forEach(i -> {
-                    InputDescriptor descriptor = descriptors.get(i);
-                    List<CredentialDTO> matches = decryptedCredentials.stream()
-                            .filter(decrypted -> matchesInputDescriptor(decrypted.getCredential(), descriptor))
-                            .map(this::buildAvailableCredential)
-                            .collect(Collectors.toList());
-
-                    if (!matches.isEmpty()) {
-                        matchingCredentialsByDescriptor.put(i, matches);
-                    } else {
-                        boolean hasFormatMatch = decryptedCredentials.stream()
-                                .anyMatch(decrypted -> matchesFormat(decrypted.getCredential(), descriptor.getFormat()));
-                        if (hasFormatMatch) {
-                            missingClaims.addAll(extractClaimsFromInputDescriptor(descriptor));
-                        } else {
-                            missingClaims.addAll(extractFormatConstraintKeys(descriptor));
-                        }
-                    }
+        IntStream.range(0, descriptors.size()).forEach(i -> {
+            InputDescriptor descriptor = descriptors.get(i);
+            List<CredentialDTO> matches = decryptedCredentials.stream()
+                    .filter(dto -> matchesInputDescriptor(dto.getCredential(), descriptor))
+                    .peek(dto -> credentialToDescriptor.put(dto.getId(), descriptor.getId()))
+                    .map(this::buildAvailableCredential)
+                    .collect(Collectors.toList());
+            if (!matches.isEmpty()) {
+                matchesByDescriptor.put(i, matches);
+            } else {
+                missingClaims.addAll(extractClaimsFromInputDescriptor(descriptor));
+            }
         });
 
-        // Flatten all matching credentials into a single list, removing duplicates by credential ID
-        Set<String> addedCredentialIds = new HashSet<>();
-        List<CredentialDTO> availableCredentials = matchingCredentialsByDescriptor.values().stream()
+        // De-duplicate: a credential can satisfy multiple descriptors but should appear once.
+        Set<String> seen = new HashSet<>();
+        List<CredentialDTO> availableCredentials = matchesByDescriptor.values().stream()
                 .flatMap(List::stream)
-                .filter(credential -> addedCredentialIds.add(credential.getCredentialId()))
+                .filter(c -> seen.add(c.getCredentialId()))
                 .collect(Collectors.toList());
 
-        MatchingCredentialsResponseDTO matchingCredentialsResponse = MatchingCredentialsResponseDTO.builder().availableCredentials(availableCredentials).missingClaims(missingClaims).build();
-
-        // Filter decrypted credentials to only include matched ones
-        Set<String> matchedCredentialIds = availableCredentials.stream()
+        Set<String> matchedIds = availableCredentials.stream()
                 .map(CredentialDTO::getCredentialId)
                 .collect(Collectors.toSet());
 
-        List<DecryptedCredentialDTO> matchingCredentials = decryptedCredentials.stream().filter(credential -> matchedCredentialIds.contains(credential.getId())).collect(Collectors.toList());
+        // Stamp each matched DecryptedCredentialDTO with the descriptor id it satisfied.
+        List<DecryptedCredentialDTO> matchedCredentials = decryptedCredentials.stream()
+                .filter(dto -> matchedIds.contains(dto.getId()))
+                .peek(dto -> dto.setDescriptorId(credentialToDescriptor.get(dto.getId())))
+                .collect(Collectors.toList());
+
+        MatchingCredentialsResponseDTO response = MatchingCredentialsResponseDTO.builder()
+                .availableCredentials(availableCredentials)
+                .missingClaims(missingClaims)
+                .isDcql(false)
+                .build();
 
         return MatchingCredentialsDTO.builder()
-                .matchingCredentialsResponse(matchingCredentialsResponse)
-                .matchingCredentials(matchingCredentials)
+                .matchingCredentialsResponse(response)
+                .matchingCredentials(matchedCredentials)
                 .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OVP 1.0 — DCQL matching
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Matches wallet credentials against each {@link CredentialQuery} in the verifier's
+     * {@link DCQLQuery}.
+     *
+     * <p>Returns one {@link DcqlQueryGroup} per credential query, carrying the matched
+     * credentials, any missing claim paths, and the {@code required} / {@code multiple}
+     * flags from the query definition.  The UI uses these groups to render per-query
+     * selection sections instead of the Draft-23 flat list.
+     *
+     * <p>Also stamps {@link DecryptedCredentialDTO#setDescriptorId} with the query id
+     * so the submission step uses the correct map key.
+     */
+    private MatchingCredentialsDTO matchWithDcqlQuery(
+            VerifiablePresentationSessionData sessionData,
+            String walletId,
+            List<DecryptedCredentialDTO> decryptedCredentials)
+            throws ApiNotAccessibleException, IOException {
+
+        DCQLQuery dcqlQuery = openID4VPService.resolveDcqlQuery(
+                sessionData.getPresentationId(),
+                sessionData.getAuthorizationRequest(),
+                sessionData.isVerifierClientPreregistered());
+
+        if (dcqlQuery == null) {
+            throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(),
+                    "Authorization request does not contain a DCQL query");
+        }
+
+        List<DcqlQueryGroup> queryGroups = new ArrayList<>();
+        // All credentials that matched at least one query (for session cache).
+        List<DecryptedCredentialDTO> allMatched = new ArrayList<>();
+
+        for (CredentialQuery credentialQuery : dcqlQuery.getCredentials()) {
+            List<DecryptedCredentialDTO> matches = decryptedCredentials.stream()
+                    .filter(dto -> matchesDcqlQuery(dto.getCredential(), credentialQuery))
+                    .map(dto -> DecryptedCredentialDTO.builder()
+                            .id(dto.getId())
+                            .walletId(dto.getWalletId())
+                            .credential(dto.getCredential())
+                            .credentialMetadata(dto.getCredentialMetadata())
+                            .createdAt(dto.getCreatedAt())
+                            .updatedAt(dto.getUpdatedAt())
+                            .descriptorId(credentialQuery.getId())
+                            .build())
+                    .collect(Collectors.toList());
+
+            allMatched.addAll(matches);
+
+            Set<String> missingClaims = matches.isEmpty()
+                    ? extractMissingClaimsFromQuery(credentialQuery) : Set.of();
+
+            List<CredentialDTO> credentialDTOs = matches.stream()
+                    .map(this::buildAvailableCredential)
+                    .collect(Collectors.toList());
+
+            // Default required=true; will be overridden for optional credential_set entries below.
+            queryGroups.add(DcqlQueryGroup.builder()
+                    .queryId(credentialQuery.getId())
+                    .required(true)
+                    .multiple(credentialQuery.getMultiple())
+                    .availableCredentials(credentialDTOs)
+                    .missingClaims(missingClaims)
+                    .build());
+        }
+
+        // Apply required=false for query IDs that only appear in optional credential_sets.
+        if (dcqlQuery.getCredentialSets() != null) {
+            Set<String> optionalQueryIds = dcqlQuery.getCredentialSets().stream()
+                    .filter(cs -> !cs.getRequired())
+                    .flatMap(cs -> cs.getOptions().stream().flatMap(List::stream))
+                    .collect(Collectors.toSet());
+            queryGroups.forEach(group -> {
+                if (optionalQueryIds.contains(group.getQueryId())) {
+                    group.setRequired(false);
+                }
+            });
+        }
+
+        List<DecryptedCredentialDTO> uniqueMatched = allMatched.stream()
+                .collect(Collectors.toMap(
+                        DecryptedCredentialDTO::getId,
+                        dto -> dto,
+                        (first, second) -> first,
+                        LinkedHashMap::new))
+                .values().stream()
+                .collect(Collectors.toList());
+
+        log.info("matchWithDcqlQuery: walletId={}, queries={}, totalMatched={}",
+                walletId, queryGroups.size(), uniqueMatched.size());
+
+        MatchingCredentialsResponseDTO response = MatchingCredentialsResponseDTO.builder()
+                .queryGroups(queryGroups)
+                .isDcql(true)
+                .build();
+
+        return MatchingCredentialsDTO.builder()
+                .matchingCredentialsResponse(response)
+                .matchingCredentials(uniqueMatched)
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DCQL credential matching helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns {@code true} when {@code vc} satisfies the given {@link CredentialQuery}.
+     *
+     * <p>Checks (in order):
+     * <ol>
+     *   <li>Format must match (case-insensitive string comparison).</li>
+     *   <li>If the query specifies {@code claims}, every claim path must exist in the
+     *       credential.  If the claim also specifies {@code values}, at least one value
+     *       must match.</li>
+     * </ol>
+     */
+    private boolean matchesDcqlQuery(VCCredentialResponse vc, CredentialQuery credentialQuery) {
+        // Step 1: format check (ldp_vc, vc+sd-jwt, dc+sd-jwt).
+        if (!formatsMatch(credentialQuery.getFormat(), vc.getFormat())) {
+            return false;
+        }
+        // Step 2: meta constraints (vct_values for SD-JWT, type_values for LDP).
+        if (!matchesDcqlMeta(vc, credentialQuery.getMeta())) {
+            return false;
+        }
+        // Step 3: claim path checks (optional).
+        if (credentialQuery.getClaims() != null) {
+            return credentialQuery.getClaims().stream()
+                    .allMatch(claimQuery -> matchesDcqlClaimPath(vc, claimQuery));
+        }
+        return true;
+    }
+
+    /** SD-JWT VC and DC formats share the same structure; treat them as compatible for DCQL. */
+    private boolean formatsMatch(String queryFormat, String credentialFormat) {
+        if (queryFormat.equalsIgnoreCase(credentialFormat)) {
+            return true;
+        }
+        return CredentialFormat.isSdJwt(queryFormat) && CredentialFormat.isSdJwt(credentialFormat);
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean matchesDcqlMeta(VCCredentialResponse vc, Map<String, Object> meta) {
+        if (meta == null || meta.isEmpty()) {
+            return true;
+        }
+
+        Object vctValuesObj = meta.get(META_VCT_VALUES);
+        if (vctValuesObj instanceof List<?> vctValues && !vctValues.isEmpty()) {
+            String credentialVct = extractVct(vc);
+            if (credentialVct == null) {
+                return false;
+            }
+            boolean vctMatches = vctValues.stream()
+                    .anyMatch(expected -> credentialVct.equalsIgnoreCase(String.valueOf(expected)));
+            if (!vctMatches) {
+                return false;
+            }
+        }
+
+        Object typeValuesObj = meta.get(META_TYPE_VALUES);
+        if (typeValuesObj instanceof List<?> typeValues && !typeValues.isEmpty()) {
+            Set<String> credentialTypes = extractCredentialTypes(vc);
+            boolean typeMatches = typeValues.stream()
+                    .anyMatch(typeCombo -> matchesTypeCombo(credentialTypes, typeCombo));
+            if (!typeMatches) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean matchesTypeCombo(Set<String> credentialTypes, Object typeCombo) {
+        if (!(typeCombo instanceof List<?> combo) || combo.isEmpty()) {
+            return false;
+        }
+        return combo.stream()
+                .map(String::valueOf)
+                .allMatch(credentialTypes::contains);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<String> extractCredentialTypes(VCCredentialResponse vc) {
+        if (!CredentialFormat.LDP_VC.getFormat().equalsIgnoreCase(vc.getFormat())) {
+            return Set.of();
+        }
+        CredentialFormatHandler handler = credentialFormatHandlerFactory.getHandler(vc.getFormat());
+        Map<String, Object> properties = (Map<String, Object>) handler.extractAllCredentialProperties(vc);
+        if (properties == null) {
+            return Set.of();
+        }
+        return extractTypesFromValue(properties.get(TYPE));
+    }
+
+    private Set<String> extractTypesFromValue(Object typeValue) {
+        if (typeValue instanceof List<?> list) {
+            return list.stream().map(String::valueOf).collect(Collectors.toSet());
+        }
+        if (typeValue instanceof String type) {
+            return Set.of(type);
+        }
+        return Set.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractVct(VCCredentialResponse vc) {
+        if (!CredentialFormat.isSdJwt(vc.getFormat())) {
+            return null;
+        }
+        CredentialFormatHandler handler = credentialFormatHandlerFactory.getHandler(vc.getFormat());
+        Map<String, Map<String, Object>> allClaims =
+                (Map<String, Map<String, Object>>) handler.extractAllCredentialProperties(vc);
+        if (allClaims == null) {
+            return null;
+        }
+        Map<String, Object> publicClaims = allClaims.get("publicClaims");
+        if (publicClaims == null || publicClaims.get(VCT) == null) {
+            return null;
+        }
+        return publicClaims.get(VCT).toString();
+    }
+
+    /**
+     * Returns {@code true} when the credential contains a value at the path defined
+     * in {@link ClaimsQuery}.  If the query also lists expected {@code values}, at
+     * least one must equal the value found in the credential.
+     */
+    private boolean matchesDcqlClaimPath(VCCredentialResponse vc, ClaimsQuery claimQuery) {
+        if (claimQuery.getPath() == null || claimQuery.getPath().isEmpty()) {
+            return true;
+        }
+
+        // Build a JSONPath string from the path list, e.g. ["credentialSubject","name"] → "$.credentialSubject.name"
+        String jsonPath = JSON_PATH_PREFIX + claimQuery.getPath().stream()
+                .map(Object::toString)
+                .collect(Collectors.joining("."));
+
+        Object credentialData = getCredentialData(vc);
+        List<Object> found = evaluateJsonPath(jsonPath, credentialData);
+        if (found.isEmpty()) return false;
+
+        // When the query specifies expected values, at least one must match.
+        if (claimQuery.getValues() != null && !claimQuery.getValues().isEmpty()) {
+            return claimQuery.getValues().stream()
+                    .anyMatch(expected -> found.stream().anyMatch(actual -> dcqlValueMatches(actual, expected)));
+        }
+        return true;
+    }
+
+    /** Compares a credential field value against a DCQL {@link ClaimValue}. */
+    private boolean dcqlValueMatches(Object actual, ClaimValue expected) {
+        if (expected instanceof ClaimValue.StringValue sv) {
+            return sv.getValue().equals(actual.toString());
+        }
+        if (expected instanceof ClaimValue.LongValue lv) {
+            // Kotlin Long is a primitive long; box it before comparing with the Object `actual`.
+            return Long.valueOf(lv.getValue()).equals(actual);
+        }
+        if (expected instanceof ClaimValue.BoolValue bv) {
+            return Boolean.valueOf(bv.getValue()).equals(actual);
+        }
+        return false;
+    }
+
+    /**
+     * Extracts the claim paths that the DCQL query requires but could not be found,
+     * returned as dot-separated path strings for display in the UI.
+     */
+    private Set<String> extractMissingClaimsFromQuery(CredentialQuery credentialQuery) {
+        if (credentialQuery.getClaims() == null) return Set.of();
+        return credentialQuery.getClaims().stream()
+                .filter(cq -> cq.getPath() != null && !cq.getPath().isEmpty())
+                .map(cq -> cq.getPath().stream().map(Object::toString).collect(Collectors.joining(".")))
+                .collect(Collectors.toSet());
     }
 
     private void validateInputParameters(PresentationDefinition presentationDefinition, String walletId, String base64Key) throws IllegalArgumentException {
@@ -159,12 +489,9 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
 
     private MatchingCredentialsResponseDTO createEmptyResponseWithMissingClaims(PresentationDefinition presentationDefinition) {
         log.info("No credentials found for wallet");
-        Set<String> missingClaims = presentationDefinition.getInputDescriptors().stream()
-                .flatMap(descriptor -> extractFormatConstraintKeys(descriptor).stream())
-                .collect(Collectors.toSet());
         return MatchingCredentialsResponseDTO.builder()
                 .availableCredentials(Collections.emptyList())
-                .missingClaims(missingClaims)
+                .missingClaims(new HashSet<>(extractRequiredClaims(presentationDefinition)))
                 .build();
     }
 
@@ -219,8 +546,11 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
 
         String vcFormat = vc.getFormat();
 
-        if (CredentialFormat.isSdJwt(vcFormat) && descriptorFormat.containsKey(vcFormat.toLowerCase())) {
-            return matchesSdJwtAlgorithm(vc, descriptorFormat, vcFormat.toLowerCase());
+        if (CredentialFormat.isSdJwt(vcFormat)) {
+            String descriptorKey = resolveSdJwtDescriptorKey(vcFormat, descriptorFormat);
+            if (descriptorKey != null) {
+                return matchesSdJwtAlgorithm(vc, descriptorFormat, descriptorKey);
+            }
         }
         if (CredentialFormat.LDP_VC.getFormat().equalsIgnoreCase(vcFormat) && descriptorFormat.containsKey(LDP_VC_FORMAT)) {
             return matchesLdpVcFormat(vc, descriptorFormat);
@@ -250,17 +580,41 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
         return vcProofType != null && requiredProofTypes.contains(vcProofType);
     }
 
-    private boolean matchesSdJwtAlgorithm(VCCredentialResponse vc, Map<String, Map<String, List<String>>> requestFormat, String formatKey) {
+    private String resolveSdJwtDescriptorKey(String vcFormat, Map<String, Map<String, List<String>>> descriptorFormat) {
+        if (descriptorFormat.containsKey(vcFormat)) {
+            return vcFormat;
+        }
+        if (descriptorFormat.containsKey(CredentialFormat.VC_SD_JWT.getFormat())) {
+            return CredentialFormat.VC_SD_JWT.getFormat();
+        }
+        if (descriptorFormat.containsKey(CredentialFormat.DC_SD_JWT.getFormat())) {
+            return CredentialFormat.DC_SD_JWT.getFormat();
+        }
+        return null;
+    }
+
+    private boolean matchesSdJwtAlgorithm(VCCredentialResponse vc,
+                                          Map<String, Map<String, List<String>>> requestFormat,
+                                          String formatKey) {
+        Map<String, List<String>> sdJwtFormat = requestFormat.get(formatKey);
         if (vc.getCredential() == null || !(vc.getCredential() instanceof String sdJwtString)) {
             return false;
         }
 
-        Map<String, List<String>> sdJwtFormat = requestFormat.get(formatKey);
-        List<?> requestAlgorithms = sdJwtFormat.get(SD_JWT_ALG_VALUES_KEY);
-        if (requestAlgorithms != null) {
-            return requestAlgorithms.contains(extractSdJwtAlgorithm(sdJwtString));
+        if (!sdJwtFormat.containsKey(SD_JWT_ALG_VALUES_KEY)) {
+            return false;
         }
-        return true; // No sd-jwt_alg_values constraint → any algorithm is acceptable
+
+        String sdJwtAlgorithm = extractSdJwtAlgorithm(sdJwtString);
+        Map<String, List<String>> requestFormatMap = requestFormat.get(formatKey);
+        if (requestFormatMap != null) {
+            List<?> requestAlgorithms = requestFormatMap.get(SD_JWT_ALG_VALUES_KEY);
+            if (requestAlgorithms != null) {
+                return requestAlgorithms.contains(sdJwtAlgorithm);
+            }
+            return true; // If no specific algorithms are required, any algorithm is acceptable
+        }
+        return false;
     }
 
     private String extractSdJwtAlgorithm(String sdJwtString) {
@@ -307,30 +661,24 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
 
         if (CredentialFormat.LDP_VC.getFormat().equalsIgnoreCase(format)) {
             return credentialFormatHandler.extractAllCredentialProperties(vc);
-        } else if (CredentialFormat.isSdJwt(format)) {
-            Map<String, ?> extractedMap = credentialFormatHandler.extractAllCredentialProperties(vc);
-            if (extractedMap == null) {
-                return Collections.emptyMap();
-            }
-            Map<String, Object> credentialClaimsMap = new HashMap<>();
-            // publicClaims and sdClaims are mutually exclusive by SD-JWT spec — no key collision.
-            // sdClaims values are disclosure blobs (List<String>), not decoded claim values.
-            // This supports existence-based field matching (e.g. $.given_name present).
-            // Value-filter matching on SD claims (e.g. $.age >= 18) is not supported here
-            // and requires decoding disclosures — tracked as a follow-up improvement.
-            for (Map.Entry<String, ?> outer : extractedMap.entrySet()) {
-                if (outer.getValue() instanceof Map<?, ?> innerMap) {
-                    for (Map.Entry<?, ?> inner : innerMap.entrySet()) {
-                        if (inner.getKey() instanceof String key) {
-                            credentialClaimsMap.put(key, inner.getValue());
-                        }
-                    }
-                }
-            }
-            return credentialClaimsMap;
-        } else {
-            throw new InvalidRequestException(UNSUPPORTED_FORMAT.getErrorCode(), "Unsupported credential format: " + format);
         }
+        if (CredentialFormat.isSdJwt(format)) {
+            return extractMergedSdJwtClaims(vc, credentialFormatHandler);
+        }
+        throw new InvalidRequestException(UNSUPPORTED_FORMAT.getErrorCode(), "Unsupported credential format: " + format);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> extractMergedSdJwtClaims(VCCredentialResponse vc,
+                                                           CredentialFormatHandler credentialFormatHandler) {
+        Map<String, ?> extractedMap = credentialFormatHandler.extractAllCredentialProperties(vc);
+        if (extractedMap == null) {
+            return Collections.emptyMap();
+        }
+        Map<String, Map<String, Object>> allCredentialProperties = (Map<String, Map<String, Object>>) extractedMap;
+        Map<String, Object> credentialClaimsMap = new HashMap<>();
+        allCredentialProperties.values().forEach(credentialClaimsMap::putAll);
+        return credentialClaimsMap;
     }
 
     private boolean matchesFilter(Object match, Filter filter) {
@@ -421,8 +769,10 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
         }
 
         if (CredentialFormat.isSdJwt(decryptedCredentialDTO.getCredential().getFormat())) {
-            CredentialFormatHandler credentialFormatHandler = credentialFormatHandlerFactory.getHandler(decryptedCredentialDTO.getCredential().getFormat());
-            Map<String, Map<String, Object>> allClaims = (Map<String, Map<String, Object>>) credentialFormatHandler.extractAllCredentialProperties(decryptedCredentialDTO.getCredential());
+            CredentialFormatHandler credentialFormatHandler = credentialFormatHandlerFactory
+                    .getHandler(decryptedCredentialDTO.getCredential().getFormat());
+            Map<String, Map<String, Object>> allClaims = (Map<String, Map<String, Object>>) credentialFormatHandler
+                    .extractAllCredentialProperties(decryptedCredentialDTO.getCredential());
 
             publicClaimsMap = allClaims.get("publicClaims");
             sdClaimsMap = allClaims.get("sdClaims");
@@ -455,10 +805,10 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
             Map<String, Object> csMap = (Map<String, Object>) credentialSubject;
             collectPaths(csMap, "$", paths);
         } else {
+            // Remove standard JWT claims and SD-JWT metadata
             List<String> metadataKeys = Arrays.asList("vct", "cnf", "iss", "sub", "aud", "exp", "nbf", "iat", "jti", SD, "_sd_alg", "id");
-            Map<String, Object> filteredMap = new HashMap<>(publicClaimsMap);
-            metadataKeys.forEach(filteredMap::remove);
-            collectPaths(filteredMap, "$", paths);
+            metadataKeys.forEach(publicClaimsMap::remove);
+            collectPaths(publicClaimsMap, "$", paths);
         }
         return paths;
     }
@@ -503,23 +853,6 @@ public class CredentialMatchingServiceImpl implements CredentialMatchingService 
                 paths.add(currentPath);
             }
         }
-    }
-
-    private Set<String> extractFormatConstraintKeys(InputDescriptor descriptor) {
-        Map<String, Map<String, List<String>>> format = descriptor.getFormat();
-        if (format == null || format.isEmpty()) {
-            return Collections.singleton(descriptor.getId());
-        }
-
-        Set<String> result = new HashSet<>();
-        if (format.containsKey(CredentialFormat.VC_SD_JWT.getFormat()) || format.containsKey(CredentialFormat.DC_SD_JWT.getFormat())) {
-            result.add(SD_JWT_ALG_VALUES_KEY);
-        }
-        if (format.containsKey(LDP_VC_FORMAT)) {
-            result.add(PROOF_TYPE_KEY);
-        }
-
-        return result.isEmpty() ? Collections.singleton(descriptor.getId()) : result;
     }
 
     private boolean hasUniformKeys(List<?> list) {

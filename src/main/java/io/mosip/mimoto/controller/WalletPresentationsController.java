@@ -47,7 +47,6 @@ public class WalletPresentationsController {
     private final WalletPresentationService walletPresentationService;
 
     private final SessionManager sessionManager;
-
     public WalletPresentationsController(WalletPresentationService walletPresentationService, SessionManager sessionManager) {
         this.walletPresentationService = walletPresentationService;
         this.sessionManager = sessionManager;
@@ -95,9 +94,15 @@ public class WalletPresentationsController {
 
             VPResponseDTO verifiablePresentationResponseDTO = walletPresentationService.handleVPAuthorizationRequest(vpAuthorizationRequest.getAuthorizationRequestUrl(), walletId);
 
-            VerifiablePresentationSessionData verifiablePresentationSessionData = new VerifiablePresentationSessionData(verifiablePresentationResponseDTO.getPresentationId(),
-                    vpAuthorizationRequest.getAuthorizationRequestUrl(), Instant.now(),
-                    verifiablePresentationResponseDTO.getVerifiablePresentationVerifierDTO().isPreregisteredWithWallet(), null);
+            // Include the spec version detected during authorization request processing so that
+            // subsequent calls in this session (get credentials, submit) can route correctly.
+            VerifiablePresentationSessionData verifiablePresentationSessionData = new VerifiablePresentationSessionData(
+                    verifiablePresentationResponseDTO.getPresentationId(),
+                    vpAuthorizationRequest.getAuthorizationRequestUrl(),
+                    Instant.now(),
+                    verifiablePresentationResponseDTO.getVerifiablePresentationVerifierDTO().isPreregisteredWithWallet(),
+                    null,
+                    verifiablePresentationResponseDTO.getSpecVersion());
 
             sessionManager.storePresentationSessionData(httpSession, verifiablePresentationSessionData, walletId);
 

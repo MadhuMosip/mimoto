@@ -12,7 +12,6 @@ public final class DPoPConstants {
     public static final String INVALID_TOKEN_ERROR = "invalid_token";
     public static final String INVALID_DPOP_PROOF_ERROR = "invalid_dpop_proof";
     public static final String DPOP_BOUND_TOKEN_MESSAGE = "DPoP-bound access token";
-    public static final String CERTIFY_DPOP_NOT_SUPPORTED_MESSAGE = "DPoP tokens are not supported. Use a Bearer token.";
     public static final String HTTP_METHOD_POST = "POST";
     public static final String AUTHORIZATION_RESPONSE_TYPE = "code";
 

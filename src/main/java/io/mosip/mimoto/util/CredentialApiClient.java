@@ -43,9 +43,9 @@ public class CredentialApiClient {
 
     /**
      * Posts a credential request supporting DPoP authorization and Bearer downgrade (RFC 9449 §7.2).
-     * Retries once as Bearer when the issuer rejects the DPoP auth scheme (including Certify-style
-     * responses without a Bearer WWW-Authenticate header). Never downgrades a use_dpop_nonce
-     * challenge or an issuer that requires a DPoP-bound token to be presented with a DPoP proof.
+     * Retries once as Bearer when the issuer rejects the DPoP auth scheme. Never downgrades a
+     * use_dpop_nonce challenge or an issuer that requires a DPoP-bound token to be presented with a
+     * DPoP proof.
      */
     public <T> T postCredentialApi(String uri, MediaType mediaType, Object requestType, Class<T> responseClass,
                                    String accessToken, String tokenType, String dPoPProof) {
@@ -62,8 +62,7 @@ public class CredentialApiClient {
             String wwwAuthenticate = responseHeaders != null
                     ? responseHeaders.getFirst(DPoPConstants.WWW_AUTHENTICATE_HEADER) : null;
             WwwAuthenticateChallenge challenge = WwwAuthenticateChallenge.parse(wwwAuthenticate);
-            String nonce = responseHeaders != null
-                    ? responseHeaders.getFirst(DPoPConstants.DPOP_NONCE_HEADER) : null;
+            String nonce = DPoPResponseHelper.dPoPNonce(responseHeaders);
             String responseBody = e.getResponseBodyAsString();
 
             if (isDPoPNonceChallenge(challenge, nonce, responseBody)) {
@@ -122,52 +121,28 @@ public class CredentialApiClient {
     }
 
     /**
-     * Retry as Bearer only when the issuer clearly does not support DPoP:
-     * - WWW-Authenticate is Bearer-only (RFC 9449 §7.2), or
-     * - response body matches Certify's DPoP-not-supported message.
-     * Never Bearer-downgrades a use_dpop_nonce challenge, invalid_dpop_proof, or a DPoP-bound token rejection.
+     * Retry once as Bearer when DPoP was rejected, unless the issuer is asking for a DPoP nonce
+     * or a DPoP-bound token to be presented with a DPoP proof.
      */
     private static boolean shouldRetryWithBearer(WwwAuthenticateChallenge challenge, String responseBody) {
-        if (indicatesUseDPoPNonce(challenge, responseBody) || issuerRequiresDPoPProof(challenge, responseBody)) {
-            return false;
-        }
-        if (!challenge.isDPoP() && challenge.isBearer()) {
-            return true;
-        }
-        return isCertifyDPoPUnsupported(responseBody);
+        return !indicatesUseDPoPNonce(challenge, responseBody) && !issuerRequiresDPoPProof(challenge, responseBody);
     }
 
     /**
-     * Certify / Spring Security returns XML 403 Forbidden when the Authorization scheme is DPoP.
-     */
-    private static boolean isCertifyDPoPUnsupported(String responseBody) {
-        if (StringUtils.isBlank(responseBody)) {
-            return false;
-        }
-        if (responseBody.contains(DPoPConstants.CERTIFY_DPOP_NOT_SUPPORTED_MESSAGE)) {
-            return true;
-        }
-        String compact = responseBody.replaceAll("\\s+", "");
-        return compact.contains("<error>Forbidden</error>") && compact.contains("<status>403</status>");
-    }
-
-    /**
-     * Send DPoP only when a proof is present and the token is not a Bearer token.
-     * Certify rejects Authorization: DPoP with a gateway 403.
+     * Send DPoP whenever a proof was built, even if the Authorization Server returned
+     * {@code token_type: Bearer} for a DPoP-bound token. Issuers that do not support DPoP
+     * are handled by one Bearer retry.
      */
     private static boolean shouldSendDPoP(String tokenType, String dPoPProof) {
-        if (StringUtils.isBlank(dPoPProof)) {
-            return false;
-        }
-        return !DPoPConstants.BEARER_TOKEN_TYPE.equalsIgnoreCase(StringUtils.defaultString(tokenType));
+        return StringUtils.isNotBlank(dPoPProof);
     }
 
     /**
      * RFC 9449 resource servers reject a Bearer retry when the access token is DPoP-bound.
      */
     private static boolean issuerRequiresDPoPProof(WwwAuthenticateChallenge challenge, String responseBody) {
-        if (challenge.isDPoP() && (DPoPConstants.INVALID_DPOP_PROOF_ERROR.equals(challenge.getError())
-                || DPoPConstants.INVALID_TOKEN_ERROR.equals(challenge.getError()))) {
+        if (DPoPConstants.INVALID_DPOP_PROOF_ERROR.equals(challenge.getError())
+                || (challenge.isDPoP() && DPoPConstants.INVALID_TOKEN_ERROR.equals(challenge.getError()))) {
             return true;
         }
         if (StringUtils.isBlank(responseBody)) {

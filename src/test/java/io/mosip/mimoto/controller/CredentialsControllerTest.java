@@ -29,6 +29,7 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import java.io.ByteArrayInputStream;
 import java.util.List;
 
+import static io.mosip.mimoto.exception.ErrorConstants.INTERNAL_SERVER_ERROR;
 import static io.mosip.mimoto.exception.ErrorConstants.INVALID_REQUEST;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -128,8 +129,8 @@ public class CredentialsControllerTest {
                         .header("state", "oauth-state")
                         .content(requestContent))
                 .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.errors[0].errorCode", Matchers.is("RESIDENT-APP-034")))
-                .andExpect(jsonPath("$.errors[0].errorMessage", Matchers.is("Exception occurred while performing the authorization")));
+                .andExpect(jsonPath("$.errorCode", Matchers.is(INTERNAL_SERVER_ERROR.getErrorCode())))
+                .andExpect(jsonPath("$.errorMessage", Matchers.is(INTERNAL_SERVER_ERROR.getErrorMessage())));
         verify(dPoPSessionService).remove(any(), eq("oauth-state"));
         verify(pkceSessionManager).remove(any(), eq("oauth-state"));
     }

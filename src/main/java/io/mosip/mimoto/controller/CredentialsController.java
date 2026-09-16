@@ -70,20 +70,24 @@ public class CredentialsController {
             @ApiResponse(responseCode = "200", content = {@Content(mediaType = "application/pdf")}),
             @ApiResponse(responseCode = "400", content = {@Content(schema = @Schema(implementation = ResponseWrapper.class), mediaType = "application/json")})})
     @PostMapping("/download")
-    public ResponseEntity<?> downloadCredentialAsPDF(
+    public ResponseEntity<InputStreamResource> downloadCredentialAsPDF(
             @RequestHeader(value = DPoPConstants.OAUTH_STATE_HEADER, required = false) String state,
             @RequestParam Map<String, String> params,
-            HttpSession httpSession) throws Exception {
+            HttpSession httpSession)
+            throws ApiNotAccessibleException, AuthorizationServerWellknownResponseException,
+            InvalidWellknownResponseException, InvalidCredentialResourceException,
+            VCVerificationException, ExternalServiceUnavailableException, WriterException, IOException {
+        //TODO: remove this default value after the apitest is updated
+        params.putIfAbsent("vcStorageExpiryLimitInTimes", "-1");
 
+        String issuerId = params.get("issuer");
+        String credentialType = params.get("credential");
+        String credentialValidity = params.get("vcStorageExpiryLimitInTimes");
+        String locale = params.get("locale");
         try {
+            log.info("Initiated Download Credential Call");
             ByteArrayInputStream inputStream = credentialService.downloadCredentialAsPDF(
-                    params.get("issuer"),
-                    params.get("credential"),
-                    params.get("vcStorageExpiryLimitInTimes"),
-                    params.get("locale"),
-                    params.get("code"),
-                    state,
-                    httpSession);
+                    issuerId, credentialType, credentialValidity, locale, params.get("code"), state, httpSession);
             return ResponseEntity
                     .ok()
                     .contentType(MediaType.APPLICATION_PDF)
@@ -98,7 +102,6 @@ public class CredentialsController {
     @ExceptionHandler({
             InvalidRequestException.class,
             ApiNotAccessibleException.class,
-            IOException.class,
             InvalidCredentialResourceException.class,
             VCVerificationException.class,
             AuthorizationServerWellknownResponseException.class,
@@ -110,12 +113,12 @@ public class CredentialsController {
     }
 
     @ExceptionHandler(ExternalServiceUnavailableException.class)
-    public ResponseEntity<Object> handleServiceUnavailableException(Exception ex) {
+    public ResponseEntity<Object> handleExternalServiceUnavailableException(ExternalServiceUnavailableException ex) {
         log.error("External service unavailable during credential download: ", ex);
         return Utilities.handleErrorResponse(ex, PlatformErrorMessages.MIMOTO_PDF_SIGN_EXCEPTION.getCode(), HttpStatus.SERVICE_UNAVAILABLE, MediaType.APPLICATION_JSON);
     }
 
-    @ExceptionHandler({WriterException.class, Exception.class})
+    @ExceptionHandler({WriterException.class, IOException.class})
     public ResponseEntity<Object> handleServerErrorException(Exception ex) {
         log.error("Credential download server error: ", ex);
         return Utilities.handleErrorResponse(ex, PlatformErrorMessages.MIMOTO_PDF_SIGN_EXCEPTION.getCode(), HttpStatus.INTERNAL_SERVER_ERROR, MediaType.APPLICATION_JSON);

@@ -1,7 +1,6 @@
 package io.mosip.mimoto.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.mosip.mimoto.constant.DPoPConstants;
 import io.mosip.mimoto.dto.IssuerDTO;
 import io.mosip.mimoto.dto.VerifiableCredentialRequestDTO;
 import io.mosip.mimoto.dto.dpop.DPoPSession;
@@ -225,15 +224,8 @@ public class IdpServiceImpl implements IdpService {
             ResponseEntity<String> asResponse =
                     exchangeTokenWithServerDPoP(tokenEndpoint, request, dPoPSession);
             if (!asResponse.getStatusCode().is2xxSuccessful()) {
-                Object body = DPoPResponseHelper.normalizeOAuthErrorBody(asResponse.getBody());
-                String description = asResponse.getBody();
-                if (body instanceof Map<?, ?> map && map.get("error_description") != null) {
-                    description = String.valueOf(map.get("error_description"));
-                } else if (body instanceof Map<?, ?> map && map.get("error") != null) {
-                    description = String.valueOf(map.get("error"));
-                }
                 throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(),
-                        "Token exchange failed: " + description);
+                        "Token exchange failed: " + asResponse.getBody());
             }
             if (!StringUtils.hasText(asResponse.getBody())) {
                 throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), "Token exchange returned an empty body");
@@ -256,11 +248,11 @@ public class IdpServiceImpl implements IdpService {
                                                                HttpEntity<MultiValueMap<String, String>> request,
                                                                DPoPSession dPoPSession) {
         ResponseEntity<String> asResponse = postTokenWithSessionProof(tokenEndpoint, request, dPoPSession);
-        if (isUseDPoPNonce(asResponse)) {
-            String nonce = asResponse.getHeaders().getFirst(DPoPConstants.DPOP_NONCE_HEADER);
+        String nonce = DPoPResponseHelper.dPoPNonce(asResponse.getHeaders());
+        if (isUseDPoPNonce(asResponse) && StringUtils.hasText(nonce)) {
             asResponse = postTokenWithNonceProof(tokenEndpoint, request, dPoPSession, nonce);
         }
-        return asResponse;
+            return asResponse;
     }
 
     private ResponseEntity<String> postTokenWithSessionProof(String tokenEndpoint,
@@ -290,9 +282,11 @@ public class IdpServiceImpl implements IdpService {
                     String.class
             );
         } catch (HttpStatusCodeException e) {
-            return ResponseEntity.status(e.getStatusCode())
-                    .headers(e.getResponseHeaders())
-                    .body(e.getResponseBodyAsString());
+            HttpHeaders responseHeaders = new HttpHeaders();
+            if (e.getResponseHeaders() != null) {
+                responseHeaders.putAll(e.getResponseHeaders());
+            }
+            return new ResponseEntity<>(e.getResponseBodyAsString(), responseHeaders, e.getStatusCode());
         }
     }
 
@@ -300,15 +294,7 @@ public class IdpServiceImpl implements IdpService {
         if (response.getStatusCode().is2xxSuccessful()) {
             return false;
         }
-        String nonce = response.getHeaders().getFirst(DPoPConstants.DPOP_NONCE_HEADER);
-        if (!StringUtils.hasText(nonce)) {
-            return false;
-        }
-        Object body = DPoPResponseHelper.normalizeOAuthErrorBody(response.getBody());
-        if (body instanceof Map<?, ?> map) {
-            return DPoPConstants.USE_DPOP_NONCE_ERROR.equals(String.valueOf(map.get("error")));
-        }
-        return StringUtils.hasText(response.getBody()) && response.getBody().contains(DPoPConstants.USE_DPOP_NONCE_ERROR);
+        return DPoPResponseHelper.isUseDPoPNonce(response.getHeaders(), response.getBody());
     }
 
     private void validateCodeVerifier(String codeVerifier) {

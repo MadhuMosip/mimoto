@@ -56,31 +56,9 @@ class CredentialApiClientTest {
     }
 
     @Test
-    void postCredentialApi_shouldRetryWithBearerOnCertifyDPoPNotSupportedBodyWithoutWwwAuthenticate() {
+    void postCredentialApi_shouldRetryWithBearerOnXmlForbiddenWithoutWwwAuthenticate() {
         TestResponse success = new TestResponse("credential");
-        byte[] body = DPoPConstants.CERTIFY_DPOP_NOT_SUPPORTED_MESSAGE.getBytes(StandardCharsets.UTF_8);
-
-        HttpClientErrorException unauthorized = HttpClientErrorException.create(
-                HttpStatus.UNAUTHORIZED, "Unauthorized",
-                new HttpHeaders(), body, StandardCharsets.UTF_8);
-
-        when(plainRestTemplate.exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(TestResponse.class)))
-                .thenThrow(unauthorized)
-                .thenReturn(new ResponseEntity<>(success, HttpStatus.OK));
-
-        TestResponse result = credentialApiClient.postCredentialApi(
-                TEST_URI, MediaType.APPLICATION_JSON, "request", TestResponse.class,
-                ACCESS_TOKEN, DPoPConstants.DPOP_TOKEN_TYPE, DPOP_PROOF);
-
-        assertNotNull(result);
-        assertEquals("credential", result.value);
-        verify(plainRestTemplate, times(2)).exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(TestResponse.class));
-    }
-
-    @Test
-    void postCredentialApi_shouldRetryWithBearerOnCertifyXmlForbiddenWithoutWwwAuthenticate() {
-        TestResponse success = new TestResponse("credential");
-        String xmlBody = "<Map><timestamp>2026-08-25T06:49:57.554+00:00</timestamp><status>403</status><error>Forbidden</error><path>/v1/certify/issuance/credential</path></Map>";
+        String xmlBody = "<Map><timestamp>2026-08-25T06:49:57.554+00:00</timestamp><status>403</status><error>Forbidden</error><path>/credential</path></Map>";
 
         HttpClientErrorException forbidden = HttpClientErrorException.create(
                 HttpStatus.FORBIDDEN, "Forbidden",
@@ -100,20 +78,23 @@ class CredentialApiClientTest {
     }
 
     @Test
-    void postCredentialApi_shouldNotRetryWithBearerOnForbiddenWithoutDPoPChallenge() {
+    void postCredentialApi_shouldRetryWithBearerOnForbiddenWithoutWwwAuthenticate() {
+        TestResponse success = new TestResponse("credential");
         HttpClientErrorException forbidden = HttpClientErrorException.create(
                 HttpStatus.FORBIDDEN, "Forbidden",
                 new HttpHeaders(), "{}".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
 
         when(plainRestTemplate.exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(TestResponse.class)))
-                .thenThrow(forbidden);
+                .thenThrow(forbidden)
+                .thenReturn(new ResponseEntity<>(success, HttpStatus.OK));
 
         TestResponse result = credentialApiClient.postCredentialApi(
                 TEST_URI, MediaType.APPLICATION_JSON, "request", TestResponse.class,
                 ACCESS_TOKEN, DPoPConstants.DPOP_TOKEN_TYPE, DPOP_PROOF);
 
-        verify(plainRestTemplate, times(1)).exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(TestResponse.class));
-        assertTrue(result == null || result.value == null);
+        assertNotNull(result);
+        assertEquals("credential", result.value);
+        verify(plainRestTemplate, times(2)).exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(TestResponse.class));
     }
 
     @Test
@@ -159,7 +140,7 @@ class CredentialApiClientTest {
     }
 
     @Test
-    void postCredentialApi_shouldSendBearerWhenTokenTypeIsBearerEvenIfDPoPProofPresent() {
+    void postCredentialApi_shouldSendDPoPWhenProofPresentEvenIfTokenTypeIsBearer() {
         when(plainRestTemplate.exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(TestResponse.class)))
                 .thenReturn(new ResponseEntity<>(new TestResponse("credential"), HttpStatus.OK));
 
@@ -170,8 +151,8 @@ class CredentialApiClientTest {
         ArgumentCaptor<HttpEntity> requestCaptor = ArgumentCaptor.forClass(HttpEntity.class);
         verify(plainRestTemplate).exchange(eq(TEST_URI), eq(HttpMethod.POST), requestCaptor.capture(), eq(TestResponse.class));
         HttpHeaders headers = requestCaptor.getValue().getHeaders();
-        assertEquals("Bearer " + ACCESS_TOKEN, headers.getFirst(HttpHeaders.AUTHORIZATION));
-        assertNull(headers.getFirst(DPoPConstants.DPOP_HEADER));
+        assertEquals("DPoP " + ACCESS_TOKEN, headers.getFirst(HttpHeaders.AUTHORIZATION));
+        assertEquals(DPOP_PROOF, headers.getFirst(DPoPConstants.DPOP_HEADER));
     }
 
     @Test
@@ -221,6 +202,29 @@ class CredentialApiClientTest {
 
         assertEquals("Credential endpoint must use HTTPS", exception.getErrorText());
         verifyNoInteractions(plainRestTemplate);
+    }
+
+    @Test
+    void postCredentialApi_shouldMapJsonOAuthError_when_issuerReturnsErrorObject() {
+        String errorBody = "{\"error\":\"invalid_dpop_proof\","
+                + "\"error_description\":\"This access token is DPoP-bound and cannot be presented as a Bearer token.\"}";
+        HttpClientErrorException unauthorized = HttpClientErrorException.create(
+                HttpStatus.UNAUTHORIZED, "Unauthorized",
+                new HttpHeaders(), errorBody.getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+
+        when(plainRestTemplate.exchange(eq(TEST_URI), eq(HttpMethod.POST), any(HttpEntity.class),
+                eq(io.mosip.mimoto.dto.mimoto.V1VCCredentialResponse.class)))
+                .thenThrow(unauthorized);
+
+        io.mosip.mimoto.dto.mimoto.V1VCCredentialResponse result = credentialApiClient.postCredentialApi(
+                TEST_URI, MediaType.APPLICATION_JSON, "request",
+                io.mosip.mimoto.dto.mimoto.V1VCCredentialResponse.class,
+                ACCESS_TOKEN, DPoPConstants.BEARER_TOKEN_TYPE, null);
+
+        assertNotNull(result);
+        assertEquals("invalid_dpop_proof", result.getError());
+        assertEquals("This access token is DPoP-bound and cannot be presented as a Bearer token.",
+                result.getErrorDescription());
     }
 
     static class TestResponse {

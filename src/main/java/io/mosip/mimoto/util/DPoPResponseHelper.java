@@ -1,52 +1,31 @@
 package io.mosip.mimoto.util;
 
+import io.mosip.mimoto.constant.DPoPConstants;
 import org.apache.commons.lang3.StringUtils;
-
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import org.springframework.http.HttpHeaders;
 
 /**
- * Normalizes authorization-server OAuth error bodies for DPoP token exchange.
+ * Reads RFC 9449 {@code DPoP-Nonce} and {@code use_dpop_nonce} challenges.
  */
 public final class DPoPResponseHelper {
-
-    private static final Pattern XML_TAG = Pattern.compile("<([a-zA-Z0-9_]+)>([^<]*)</\\1>");
 
     private DPoPResponseHelper() {
     }
 
-    /**
-     * MOSIP eSignet may serialize {@code OAuthError} as XML. Token exchange
-     * treats {@code use_dpop_nonce} when the body has an {@code error} field.
-     */
-    public static Object normalizeOAuthErrorBody(String responseBody) {
-        if (StringUtils.isBlank(responseBody)) {
-            return responseBody;
+    public static boolean isUseDPoPNonce(HttpHeaders headers, String responseBody) {
+        String wwwAuthenticate = headers == null ? null : headers.getFirst(HttpHeaders.WWW_AUTHENTICATE);
+        WwwAuthenticateChallenge challenge = WwwAuthenticateChallenge.parse(wwwAuthenticate);
+        if (challenge.isDPoP() && DPoPConstants.USE_DPOP_NONCE_ERROR.equals(challenge.getError())) {
+            return true;
         }
-        Map<String, String> xmlError = parseOAuthErrorXml(responseBody);
-        return xmlError != null ? xmlError : responseBody;
+        return StringUtils.isNotBlank(responseBody) && responseBody.contains(DPoPConstants.USE_DPOP_NONCE_ERROR);
     }
 
-    static Map<String, String> parseOAuthErrorXml(String responseBody) {
-        if (StringUtils.isBlank(responseBody) || !responseBody.contains("<error>")) {
+    public static String dPoPNonce(HttpHeaders headers) {
+        if (headers == null || headers.isEmpty()) {
             return null;
         }
-        Map<String, String> tags = new LinkedHashMap<>();
-        Matcher matcher = XML_TAG.matcher(responseBody);
-        while (matcher.find()) {
-            tags.put(matcher.group(1), matcher.group(2));
-        }
-        String error = tags.get("error");
-        if (StringUtils.isBlank(error)) {
-            return null;
-        }
-        Map<String, String> result = new LinkedHashMap<>();
-        result.put("error", error);
-        if (tags.containsKey("error_description")) {
-            result.put("error_description", tags.get("error_description"));
-        }
-        return result;
+        String nonce = headers.getFirst(DPoPConstants.DPOP_NONCE_HEADER);
+        return StringUtils.isNotBlank(nonce) ? nonce : null;
     }
 }

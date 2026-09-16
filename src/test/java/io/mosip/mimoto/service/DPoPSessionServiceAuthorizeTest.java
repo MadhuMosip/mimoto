@@ -1,6 +1,7 @@
 package io.mosip.mimoto.service;
 
 import io.mosip.mimoto.dto.dpop.DPoPSession;
+import io.mosip.mimoto.dto.idp.TokenResponseDTO;
 import io.mosip.mimoto.dto.mimoto.CredentialIssuerConfiguration;
 import io.mosip.mimoto.exception.InvalidRequestException;
 import org.junit.Test;
@@ -65,6 +66,25 @@ public class DPoPSessionServiceAuthorizeTest {
         service.remove(httpSession, "state-a");
         assertNull(service.find(httpSession, "state-a"));
         assertNotNull(service.find(httpSession, "state-b"));
+    }
+
+    @Test
+    public void should_generateCredentialProof_when_tokenTypeIsBearer() {
+        DPoPManager dPoPManager = mock(DPoPManager.class);
+        DPoPSessionService service = new DPoPSessionService(dPoPManager);
+        MockHttpSession httpSession = new MockHttpSession();
+        DPoPSession session = DPoPSession.builder().state("oauth-state").alg("ES256").jwkJson("{}").build();
+        service.store(httpSession, session);
+        TokenResponseDTO token = TokenResponseDTO.builder()
+                .access_token("access-token")
+                .token_type("Bearer")
+                .build();
+        when(dPoPManager.generateCredentialProof(session, "https://issuer.example.com/credential", "access-token"))
+                .thenReturn("dpop-proof");
+
+        String proof = service.credentialProof(httpSession, "oauth-state", token, "https://issuer.example.com/credential");
+
+        assertEquals("dpop-proof", proof);
     }
 
     private static DPoPSessionService serviceWithMocks() {

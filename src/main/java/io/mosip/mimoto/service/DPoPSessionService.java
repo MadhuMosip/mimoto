@@ -1,6 +1,5 @@
 package io.mosip.mimoto.service;
 
-import io.mosip.mimoto.constant.DPoPConstants;
 import io.mosip.mimoto.constant.SessionKeys;
 import io.mosip.mimoto.dto.dpop.DPoPSession;
 import io.mosip.mimoto.dto.idp.TokenResponseDTO;
@@ -78,10 +77,6 @@ public class DPoPSessionService {
                                   String credentialEndpoint) {
         DPoPSession session = find(httpSession, state);
         if (session == null || token == null || StringUtils.isBlank(token.getAccess_token())) {
-            return null;
-        }
-        if (StringUtils.isNotBlank(token.getToken_type())
-                && !DPoPConstants.DPOP_TOKEN_TYPE.equalsIgnoreCase(token.getToken_type())) {
             return null;
         }
         return dPoPManager.generateCredentialProof(session, credentialEndpoint, token.getAccess_token());

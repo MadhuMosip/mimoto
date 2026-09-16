@@ -149,6 +149,8 @@ public class CredentialServiceImpl implements CredentialService {
         IssuerConfig issuerConfig = fetchIssuerConfig(issuerId, credentialConfigurationId);
         String credentialEndpoint = issuerConfig.getWellKnownResponse().getCredentialEndPoint();
         String proof = dPoPSessionService.credentialProof(httpSession, state, tokenResponse, credentialEndpoint);
+        log.info("Credential DPoP proof for issuer {} endpoint {}: {}",
+                issuerId, credentialEndpoint, StringUtils.isNotBlank(proof) ? "present" : "absent");
         try {
             return storeDownloadedCredential(tokenResponse, credentialConfigurationId, walletId, base64Key, issuerId, locale, proof, issuerConfig);
         } catch (DPoPChallengeException exception) {

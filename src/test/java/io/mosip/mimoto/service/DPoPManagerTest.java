@@ -54,7 +54,7 @@ public class DPoPManagerTest {
         assertNotNull(dPoPManager.jwkThumbprint(session));
         assertEquals("https://as.example.com/v1/esignet/oauth/token", session.getTokenHtu());
 
-        String credentialHtu = "https://issuer.example/v1/certify/issuance";
+        String credentialHtu = "https://issuer.example/credential";
         String proof = dPoPManager.generateCredentialProof(session, credentialHtu, "access-token", "issuer-nonce");
         SignedJWT jwt = SignedJWT.parse(proof);
 

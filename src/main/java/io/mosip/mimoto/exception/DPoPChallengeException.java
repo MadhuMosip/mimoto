@@ -1,6 +1,6 @@
 package io.mosip.mimoto.exception;
 
-import io.mosip.mimoto.constant.DPoPConstants;
+import io.mosip.mimoto.util.DPoPResponseHelper;
 import lombok.Getter;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -23,6 +23,6 @@ public class DPoPChallengeException extends RuntimeException {
     }
 
     public String getNonce() {
-        return responseHeaders != null ? responseHeaders.getFirst(DPoPConstants.DPOP_NONCE_HEADER) : null;
+        return DPoPResponseHelper.dPoPNonce(responseHeaders);
     }
 }

@@ -65,6 +65,8 @@ public class CredentialApiClient {
             String nonce = DPoPResponseHelper.dPoPNonce(responseHeaders);
             String responseBody = e.getResponseBodyAsString();
 
+            // Propagate the nonce challenge so the caller can retry credential download
+            // with a new DPoP proof that includes the server-issued nonce (RFC 9449).
             if (isDPoPNonceChallenge(challenge, nonce, responseBody)) {
                 throw new DPoPChallengeException(e.getStatusCode(), responseHeaders, responseBody);
             }

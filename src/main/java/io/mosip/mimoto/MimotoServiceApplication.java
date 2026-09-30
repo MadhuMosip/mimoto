@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.kernel.biometrics.spi.CbeffUtil;
 import io.mosip.kernel.cbeffutil.impl.CbeffImpl;
 import io.mosip.kernel.keygenerator.bouncycastle.KeyGenerator;
+import io.mosip.mimoto.util.BundledCbeffXsd;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
 import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
 import io.swagger.v3.oas.annotations.security.SecurityScheme;
@@ -84,6 +85,7 @@ public class MimotoServiceApplication {
     }
 
     public static void main(String[] args) {
+        BundledCbeffXsd.useForLocalProfile(args);
         JSONObject gitProp = getGitProp();
         log.info(
                 String.format(

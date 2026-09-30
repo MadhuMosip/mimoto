@@ -124,9 +124,9 @@
 									"    pm.expect(jsonData.authorizationUrl).to.be.a(\"string\").and.not.empty;",
 									"    pm.expect(jsonData.state).to.be.a(\"string\").and.not.empty;",
 									"});",
-									"pm.environment.set(\"guestOauthState\", jsonData.state);",
+									"pm.environment.set(\"oauthState\", jsonData.state);",
 									"pm.environment.set(\"authorizationUrl\", jsonData.authorizationUrl);",
-									"pm.collectionVariables.set(\"guestOauthState\", jsonData.state);",
+									"pm.collectionVariables.set(\"oauthState\", jsonData.state);",
 									"pm.collectionVariables.set(\"authorizationUrl\", jsonData.authorizationUrl);"
 								],
 								"type": "text/javascript"
@@ -152,7 +152,7 @@
 							}
 						},
 						"url": "{{HOST}}/issuers/{{issuer}}/authorize",
-						"description": "Guest download step 1. Creates the PKCE and DPoP session and returns authorizationUrl plus state. Open authorizationUrl in a browser, complete login, and copy the code from the redirect. Send the saved guestOauthState header on Download Credential With GetToken from the same Postman session so the session cookie is included."
+						"description": "Creates the PKCE and DPoP session and returns authorizationUrl plus state. Open authorizationUrl in a browser, complete login, and copy the code from the redirect. Send the saved oauthState as the state header on credential download, for both guest PDF download and wallet save, from the same Postman session so the session cookie is included."
 					},
 					"response": []
 				},
@@ -163,7 +163,7 @@
 						"header": [
 							{
 								"key": "state",
-								"value": "{{guestOauthState}}",
+								"value": "{{oauthState}}",
 								"type": "text"
 							},
 							{
@@ -1556,7 +1556,7 @@
 			"value": ""
 		},
 		{
-			"key": "guestOauthState",
+			"key": "oauthState",
 			"value": ""
 		},
 		{

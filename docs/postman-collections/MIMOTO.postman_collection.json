@@ -1276,6 +1276,11 @@
 								"type": "text"
 							},
 							{
+								"key": "state",
+								"value": "{{oauthState}}",
+								"type": "text"
+							},
+							{
 								"key": "X-XSRF-TOKEN",
 								"value": "{{XSRF_TOKEN}}",
 								"type": "text"
@@ -1283,7 +1288,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"grantType\": \"authorization_code\",\n    \"code\": \"{{authCode}}\",\n    \"codeVerifier\": \"{{codeVerifier}}\",\n    \"redirectUri\": \"http://localhost:3004/redirect\",\n    \"credentialConfigurationId\": \"{{credentialConfigurationId}}\",\n    \"issuer\": \"{{issuer}}\"\n}"
+							"raw": "{\n    \"issuer\": \"{{issuer}}\",\n    \"credentialConfigurationId\": \"{{credentialConfigurationId}}\",\n    \"code\": \"{{code}}\"\n}"
 						},
 						"url": "{{HOST}}/wallets/{{walletId}}/credentials"
 					},

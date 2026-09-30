@@ -20,6 +20,8 @@ import org.springframework.web.client.RestTemplate;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -55,7 +57,7 @@ public class PushedAuthorizationRequestServiceTest {
         when(restTemplate.postForObject(eq(PAR_ENDPOINT), any(HttpEntity.class), eq(String.class)))
                 .thenReturn("{\"request_uri\":\"urn:example:request\",\"expires_in\":60}");
 
-        PushedAuthorizationResponse actual = service.push(
+        PushedAuthorizationResponse actual = service.pushAuthorizationRequest(
                 PAR_ENDPOINT, issuer(), "https://wallet.example/redirect", "openid credential",
                 "state-1", "challenge", "S256", "en", "thumbprint");
 
@@ -86,7 +88,7 @@ public class PushedAuthorizationRequestServiceTest {
                 .thenReturn("{\"expires_in\":60}");
 
         PushedAuthorizationRequestException exception = assertThrows(PushedAuthorizationRequestException.class,
-                () -> service.push(PAR_ENDPOINT, issuer(), "https://wallet.example/redirect", "scope",
+                () -> service.pushAuthorizationRequest(PAR_ENDPOINT, issuer(), "https://wallet.example/redirect", "scope",
                         "state-1", "challenge", "S256", null, null));
 
         assertTrue(exception.getMessage().contains("did not contain a request_uri"));
@@ -99,10 +101,12 @@ public class PushedAuthorizationRequestServiceTest {
                         "{\"error\":\"invalid_client\"}".getBytes(StandardCharsets.UTF_8), StandardCharsets.UTF_8));
 
         PushedAuthorizationRequestException exception = assertThrows(PushedAuthorizationRequestException.class,
-                () -> service.push(PAR_ENDPOINT, issuer(), "https://wallet.example/redirect", "scope",
+                () -> service.pushAuthorizationRequest(PAR_ENDPOINT, issuer(), "https://wallet.example/redirect", "scope",
                         "state-1", "challenge", "S256", "en", "thumbprint"));
 
-        assertTrue(exception.getMessage().contains("invalid_client"));
+        assertTrue(exception.getMessage().contains("status 401"));
+        assertFalse(exception.getMessage().contains("invalid_client"));
+        assertNull(exception.getCause());
     }
 
     private static IssuerDTO issuer() {

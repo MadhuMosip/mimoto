@@ -552,7 +552,7 @@ public class IssuersServiceTest {
         org.junit.Assert.assertTrue(actual.getAuthorizationUrl().startsWith("https://dev/authorize?"));
         org.junit.Assert.assertTrue(actual.getAuthorizationUrl().contains("dpop_jkt=thumbprint"));
         org.junit.Assert.assertTrue(actual.getAuthorizationUrl().contains("code_challenge=code-challenge"));
-        verify(pushedAuthorizationRequestService, never()).push(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(pushedAuthorizationRequestService, never()).pushAuthorizationRequest(any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(pkceSessionManager).createSession("https://injiweb.example.com/redirect");
         verify(dPoPSessionService).createSession(eq("oauth-state"), any());
         verify(pkceSessionManager).store(httpSession, pkceSession);
@@ -592,7 +592,7 @@ public class IssuersServiceTest {
         authServer.setRequirePushedAuthorizationRequests(true);
         authServer.setPushedAuthorizationRequestEndpoint("https://dev/par");
         PushedAuthorizationResponse parResponse = parResponse("urn:example:request", 60L);
-        when(pushedAuthorizationRequestService.push(eq("https://dev/par"), any(), eq("https://injiweb.example.com/redirect"),
+        when(pushedAuthorizationRequestService.pushAuthorizationRequest(eq("https://dev/par"), any(), eq("https://injiweb.example.com/redirect"),
                 eq("CredentialType1_vc_ldp"), eq("oauth-state"), eq("code-challenge"), eq("S256"), eq("en"), eq("thumbprint")))
                 .thenReturn(parResponse);
         stubAuthorizeSessions();
@@ -613,7 +613,7 @@ public class IssuersServiceTest {
 
         assertEquals("Authorization server requires pushed authorization requests but did not advertise a pushed_authorization_request_endpoint",
                 exception.getErrorText());
-        verify(pushedAuthorizationRequestService, never()).push(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(pushedAuthorizationRequestService, never()).pushAuthorizationRequest(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -621,7 +621,7 @@ public class IssuersServiceTest {
         AuthorizationServerWellKnownResponse authServer = authServer();
         authServer.setRequirePushedAuthorizationRequests(true);
         authServer.setPushedAuthorizationRequestEndpoint("https://dev/par");
-        when(pushedAuthorizationRequestService.push(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(pushedAuthorizationRequestService.pushAuthorizationRequest(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new PushedAuthorizationRequestException("PAR request failed at https://dev/par: invalid_client"));
         stubAuthorizeSessions();
 
@@ -634,7 +634,7 @@ public class IssuersServiceTest {
     @Test
     public void shouldBuildRequestUriUrlWhenParEndpointIsPresentAndNotRequired() throws Exception {
         authServer().setPushedAuthorizationRequestEndpoint("https://dev/par");
-        when(pushedAuthorizationRequestService.push(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(pushedAuthorizationRequestService.pushAuthorizationRequest(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(parResponse("urn:example:optional", 90L));
         stubAuthorizeSessions();
 
@@ -646,7 +646,7 @@ public class IssuersServiceTest {
     @Test
     public void shouldFallBackToStandardUrlWhenOptionalParFails() throws Exception {
         authServer().setPushedAuthorizationRequestEndpoint("https://dev/par");
-        when(pushedAuthorizationRequestService.push(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(pushedAuthorizationRequestService.pushAuthorizationRequest(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new PushedAuthorizationRequestException("PAR request failed"));
         stubAuthorizeSessions();
 

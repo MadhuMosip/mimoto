@@ -226,9 +226,9 @@ public class IssuersServiceImpl implements IssuersService {
         pkceSessionManager.store(httpSession, pkceSession);
         dPoPSessionService.store(httpSession, dPoPSession);
 
-        AuthorizationServerWellKnownResponse authServer = configuration.getAuthorizationServerWellKnownResponse();
-        String parEndpoint = authServer.getPushedAuthorizationRequestEndpoint();
-        boolean parRequired = Boolean.TRUE.equals(authServer.getRequirePushedAuthorizationRequests());
+        AuthorizationServerWellKnownResponse authServerWellknown = configuration.getAuthorizationServerWellKnownResponse();
+        String parEndpoint = authServerWellknown.getPushedAuthorizationRequestEndpoint();
+        boolean parRequired = Boolean.TRUE.equals(authServerWellknown.getRequirePushedAuthorizationRequests());
         String dpopJkt = dPoPManager.jwkThumbprint(dPoPSession);
 
         String authorizationUrl;
@@ -240,7 +240,7 @@ public class IssuersServiceImpl implements IssuersService {
 
         if (StringUtils.isNotBlank(parEndpoint)) {
             try {
-                PushedAuthorizationResponse parResponse = pushedAuthorizationRequestService.push(
+                PushedAuthorizationResponse parResponse = pushedAuthorizationRequestService.pushAuthorizationRequest(
                         parEndpoint,
                         issuer,
                         pkceSession.getRedirectUri(),
@@ -251,17 +251,17 @@ public class IssuersServiceImpl implements IssuersService {
                         request.getUiLocales(),
                         dpopJkt);
                 authorizationUrl = AuthorizationUrlBuilder.buildParAuthorizationUrl(
-                        authServer.getAuthorizationEndpoint(), issuer.getClient_id(), parResponse.getRequestUri());
+                        authServerWellknown.getAuthorizationEndpoint(), issuer.getClient_id(), parResponse.getRequestUri());
             } catch (PushedAuthorizationRequestException exception) {
                 if (parRequired) {
                     throw new InvalidRequestException(INVALID_REQUEST.getErrorCode(), exception.getMessage(), exception);
                 }
                 log.warn("PAR attempt failed at {} and PAR is not required, falling back to the standard authorization request: {}",
                         parEndpoint, exception.getMessage());
-                authorizationUrl = buildAuthorizationUrl(authServer, issuer, pkceSession, scope, request, dpopJkt);
+                authorizationUrl = buildAuthorizationUrl(authServerWellknown, issuer, pkceSession, scope, request, dpopJkt);
             }
         } else {
-            authorizationUrl = buildAuthorizationUrl(authServer, issuer, pkceSession, scope, request, dpopJkt);
+            authorizationUrl = buildAuthorizationUrl(authServerWellknown, issuer, pkceSession, scope, request, dpopJkt);
         }
 
         return IssuerAuthorizeResponse.builder()
@@ -270,14 +270,14 @@ public class IssuersServiceImpl implements IssuersService {
                 .build();
     }
 
-    private String buildAuthorizationUrl(AuthorizationServerWellKnownResponse authServer,
+    private String buildAuthorizationUrl(AuthorizationServerWellKnownResponse authServerWellknown,
                                                  IssuerDTO issuer,
                                                  PkceSession pkceSession,
                                                  String scope,
                                                  IssuerAuthorizeRequest request,
                                                  String dpopJkt) {
         return AuthorizationUrlBuilder.buildAuthorizationUrl(
-                authServer.getAuthorizationEndpoint(),
+                authServerWellknown.getAuthorizationEndpoint(),
                 issuer.getClient_id(),
                 pkceSession.getRedirectUri(),
                 scope,

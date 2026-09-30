@@ -48,7 +48,7 @@ public class PushedAuthorizationRequestService {
         this.keyStorePath = keyStorePath;
     }
 
-    public PushedAuthorizationResponse push(String parEndpoint,
+    public PushedAuthorizationResponse pushAuthorizationRequest(String parEndpoint,
                                              IssuerDTO issuer,
                                              String redirectUri,
                                              String scope,
@@ -95,7 +95,7 @@ public class PushedAuthorizationRequestService {
             throw exception;
         } catch (HttpStatusCodeException exception) {
             throw new PushedAuthorizationRequestException(
-                    "PAR request failed at " + parEndpoint + ": " + exception.getResponseBodyAsString(), exception);
+                    "PAR request failed at " + parEndpoint + " with status " + exception.getStatusCode().value());
         } catch (Exception exception) {
             throw new PushedAuthorizationRequestException(
                     "PAR request failed at " + parEndpoint + ": " + exception.getMessage(), exception);

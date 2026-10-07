@@ -125,7 +125,7 @@ public class DcqlMatchingHelperTest {
     }
 
     @Test
-    public void should_skipNullPathSegment_when_resolvingMissingClaims() {
+    public void should_keepNullAsArrayWildcard_when_resolvingMissingClaims() {
         List<Object> path = new ArrayList<>();
         path.add("gender");
         path.add(null);
@@ -148,7 +148,29 @@ public class DcqlMatchingHelperTest {
 
         Set<String> missingClaims = DcqlMatchingHelper.resolveMissingClaims(query, queryMatch);
 
-        assertEquals(Set.of("gender.value"), missingClaims);
+        assertEquals(Set.of("gender[*].value"), missingClaims);
+    }
+
+    @Test
+    public void should_omitBlankPath_when_failedClaimPathIsEmpty() {
+        ClaimsQuery blankClaim = new ClaimsQuery("blank", List.of(), null);
+        CredentialQuery query = new CredentialQuery(
+                "life_insurance_credential_id",
+                CredentialFormat.LDP_VC.getFormat(),
+                true,
+                Map.of(),
+                false,
+                List.of(blankClaim),
+                null);
+        QueryMatchResult queryMatch = new QueryMatchResult(
+                null,
+                List.of(new ClaimFailure(blankClaim, DCQLEvaluationErrorCodes.CLAIM_UNAVAILABLE)),
+                DCQLEvaluationErrorCodes.REQUIRED_CLAIMS_NOT_SATISFIED,
+                false);
+
+        Set<String> missingClaims = DcqlMatchingHelper.resolveMissingClaims(query, queryMatch);
+
+        assertTrue(missingClaims.isEmpty());
     }
 
     @Test

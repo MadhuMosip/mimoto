@@ -140,12 +140,21 @@ public class DcqlClaimSetHelperTest {
     }
 
     @Test
-    public void should_joinStringSegmentsWithDots_when_buildingJsonPath() {
-        assertEquals("$.org.iso.18013.5.1",
-                DcqlClaimSetHelper.buildJsonPath(List.of("org.iso.18013.5.1")));
-        assertEquals("$.credentialSubject.org.iso.18013.5.1.family_name",
-                DcqlClaimSetHelper.buildJsonPath(
-                        List.of("credentialSubject", "org.iso.18013.5.1", "family_name")));
+    public void should_quoteDottedSegments_when_buildingJsonPath() {
+        Map<String, Object> payload = Map.of(
+                "org.iso.18013.5.1", Map.of("family_name", "Doe"));
+
+        String dottedKeyPath = DcqlClaimSetHelper.buildJsonPath(List.of("org.iso.18013.5.1"));
+        String nestedDottedPath = DcqlClaimSetHelper.buildJsonPath(
+                List.of("credentialSubject", "org.iso.18013.5.1", "family_name"));
+
+        assertEquals("$['org.iso.18013.5.1']", dottedKeyPath);
+        assertEquals(Map.of("family_name", "Doe"), JsonPath.read(payload, dottedKeyPath));
+        assertEquals("$.credentialSubject['org.iso.18013.5.1'].family_name", nestedDottedPath);
+
+        Map<String, Object> nestedPayload = Map.of(
+                "credentialSubject", Map.of("org.iso.18013.5.1", Map.of("family_name", "Doe")));
+        assertEquals("Doe", JsonPath.read(nestedPayload, nestedDottedPath));
     }
     @Test
     public void should_keepDotSeparatedSegments_when_buildingJsonPathForSimpleKeys() {
@@ -214,20 +223,20 @@ public class DcqlClaimSetHelperTest {
                 DcqlClaimSetHelper.buildClaimPath(List.of("credentialSubject", "degree", "ug")));
         assertEquals("org.iso.18013.5.1",
                 DcqlClaimSetHelper.buildClaimPath(List.of("org.iso.18013.5.1")));
-        assertEquals("credentialSubject.org.iso.18013.5.1.family_name",
+        assertEquals("credentialSubject['org.iso.18013.5.1'].family_name",
                 DcqlClaimSetHelper.buildClaimPath(
                         List.of("credentialSubject", "org.iso.18013.5.1", "family_name")));
     }
 
     @Test
-    public void should_joinDottedKeys_when_resolvingJsonPaths() {
+    public void should_quoteDottedKeys_when_resolvingJsonPaths() {
         CredentialQuery query = mock(CredentialQuery.class);
         ClaimsQuery mdlClaim = mock(ClaimsQuery.class);
         when(mdlClaim.getId()).thenReturn("family-name");
         when(mdlClaim.getPath()).thenReturn(List.of("org.iso.18013.5.1", "family_name"));
         when(query.getClaims()).thenReturn(List.of(mdlClaim));
 
-        assertEquals(List.of("$.org.iso.18013.5.1.family_name"),
+        assertEquals(List.of("$['org.iso.18013.5.1'].family_name"),
                 DcqlClaimSetHelper.resolveJsonPaths(query, List.of("family-name")));
     }
 

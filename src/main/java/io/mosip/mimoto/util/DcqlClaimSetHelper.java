@@ -26,56 +26,74 @@ import java.util.stream.Collectors;
  */
 public final class DcqlClaimSetHelper {
 
+    /** Simple JSON keys use dot notation; keys with dots need bracket notation (e.g. {@code org.iso.18013.5.1}). */
+    private static final Pattern SIMPLE_PATH_SEGMENT = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*$");
+
     private DcqlClaimSetHelper() {
     }
 
     /**
-     * Builds a Jayway JSONPath ({@code $.} prefix) from a DCQL claims path pointer.
+     * Builds a Jayway JSONPath from a DCQL claims path pointer.
+     * A JSON {@code null} selects every array element ({@code [*]}). A non-simple key is quoted.
      */
     public static String buildJsonPath(List<?> pathSegments) {
-        String claimPath = buildClaimPath(pathSegments);
-        if (claimPath.isEmpty()) {
+        if (pathSegments == null || pathSegments.isEmpty()) {
             return "$";
         }
-        if (claimPath.charAt(0) == '[') {
-            return "$" + claimPath;
-        }
-        return "$." + claimPath;
+        StringBuilder jsonPath = new StringBuilder("$");
+        appendPathSegments(jsonPath, pathSegments);
+        return jsonPath.toString();
     }
 
     /**
-     * Converts a claims path pointer to a claim path, matching
-     * <p>
-     * A string is an object key joined with {@code .}. A number is an array index ({@code [n]}).
-     * JSON {@code null} selects every array element ({@code [*]}). The string {@code "null"} is an object key.
-     * </p>
-     * Examples: {@code ["credentialSubject", null, "givenName"]} → {@code credentialSubject[*].givenName},
-     * {@code ["credentialSubject", 0, "givenName"]} → {@code credentialSubject[0].givenName},
-     * {@code ["credentialSubject", "degree", "ug"]} → {@code credentialSubject.degree.ug}.
+     * Builds a credential claim path (without {@code $.}) for SD-JWT lookup and missing-claim reporting.
+     * A JSON {@code null} selects every array element ({@code [*]}). The string {@code "null"} is an object key.
+     * The first string segment is kept as stored; later keys that contain dots are bracket-quoted.
      */
     public static String buildClaimPath(List<?> pathSegments) {
         if (pathSegments == null || pathSegments.isEmpty()) {
             return "";
         }
-        StringBuilder currentPath = new StringBuilder();
-        for (Object token : pathSegments) {
-            if (token instanceof String value) {
-                if (currentPath.isEmpty()) {
-                    currentPath.append(value);
-                } else {
-                    currentPath.append('.').append(value);
-                }
-                continue;
+        StringBuilder claimPath = new StringBuilder();
+        boolean first = true;
+        for (Object segment : pathSegments) {
+            if (first && segment instanceof String value) {
+                claimPath.append(value);
+            } else {
+                appendPathSegment(claimPath, segment);
             }
-            if (token instanceof Number number) {
-                currentPath.append('[').append(formatArrayIndex(number)).append(']');
-                continue;
-            }
-            if (token == null) {
-                currentPath.append("[*]");
-            }
+            first = false;
         }
-        return currentPath.toString();
+        return claimPath.toString();
+    }
+
+    private static void appendPathSegments(StringBuilder path, List<?> pathSegments) {
+        for (Object segment : pathSegments) {
+            appendPathSegment(path, segment);
+        }
+    }
+
+    private static void appendPathSegment(StringBuilder path, Object segment) {
+        if (segment == null) {
+            path.append("[*]");
+            return;
+        }
+        if (segment instanceof Number number) {
+            path.append('[').append(formatArrayIndex(number)).append(']');
+            return;
+        }
+        if (!(segment instanceof String value)) {
+            return;
+        }
+        if (SIMPLE_PATH_SEGMENT.matcher(value).matches()) {
+            path.append('.').append(value);
+        } else {
+            path.append("['").append(escapePathSegment(value)).append("']");
+        }
+    }
+
+    private static String escapePathSegment(String segment) {
+        return segment.replace("\\", "\\\\").replace("'", "\\'");
     }
 
     private static String formatArrayIndex(Number number) {

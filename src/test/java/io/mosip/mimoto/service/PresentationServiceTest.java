@@ -967,9 +967,12 @@ public class PresentationServiceTest {
                 .thenReturn((VCCredentialProperties) vcCredentialResponse.getCredential());
         when(restApiClient.postApi(anyString(), any(), any(), eq(Map.class))).thenReturn(mockResponse);
 
-        String result = presentationService.processVPRequest(presentationRequestDTO, SpecVersion.DRAFT_23);
+        VPNotCreatedException exception = assertThrows(VPNotCreatedException.class,
+                () -> presentationService.processVPRequest(presentationRequestDTO, SpecVersion.DRAFT_23));
 
-        assertEquals("https://verifier.example.com/response?status=vp_sent", result);
+        assertEquals(
+                ErrorConstants.INVALID_REQUEST.getErrorCode() + " --> " + ErrorConstants.INVALID_REQUEST.getErrorMessage(),
+                exception.getMessage());
         verify(restApiClient).postApi(eq("https://verifier.example.com/response"), any(), any(), eq(Map.class));
     }
 

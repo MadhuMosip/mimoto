@@ -457,8 +457,9 @@ public class PresentationServiceImpl implements PresentationService {
                 return redirectUri;
             }
 
-            log.info("Presentation posted to response_uri. No redirect_uri to send the browser to.");
-            return null;
+            // Fallback behavior if redirect_uri is not provided
+            log.warn("No redirect_uri received from verifier in POST response. Falling back to response_uri.");
+            return responseUri + "?status=vp_sent";
 
         } catch (VPNotCreatedException e) {
             throw e;

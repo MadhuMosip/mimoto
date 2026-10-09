@@ -103,9 +103,7 @@ public class PresentationController {
             String redirectString = presentationService.processVPRequest(presentationRequestDTO, specVersion);
 
             log.info("Completed Presentation Authorization in the controller.");
-            if (redirectString != null && !redirectString.isBlank()) {
-                response.sendRedirect(redirectString);
-            }
+            response.sendRedirect(redirectString);
         } catch( InvalidVerifierException exception){
             sendRedirect(response, injiWebRedirectUrl, exception.getErrorCode(), exception.getErrorText(), exception);
         } catch(VPNotCreatedException | InvalidCredentialResourceException exception){

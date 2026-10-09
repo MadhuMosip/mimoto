@@ -493,8 +493,8 @@ public class PresentationServiceImpl implements PresentationService {
             log.info("Using redirectUri from request: {}", redirectUri);
             return redirectUri;
         }
-        log.warn("No redirect_uri received from verifier in POST response. Falling back to response_uri.");
-        return responseUri + "?status=vp_sent";
+
+        return null;
     }
 
     private VerifiablePresentationDTO constructVerifiablePresentationString(VCCredentialProperties vcCredentialProperties) {

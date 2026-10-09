@@ -932,7 +932,7 @@ public class PresentationServiceTest {
 
         String result = presentationService.processVPRequest(presentationRequestDTO, SpecVersion.DRAFT_23);
 
-        assertEquals("https://verifier.example.com/response?status=vp_sent", result);
+        assertNull(result);
         verify(restApiClient).postApi(eq("https://verifier.example.com/response"), any(), any(), eq(Map.class));
     }
 

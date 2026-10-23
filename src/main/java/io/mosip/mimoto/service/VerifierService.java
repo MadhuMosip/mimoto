@@ -16,8 +16,8 @@ public interface VerifierService {
     VerifierDTO validateVerifier(String clientId, String responseUri, String redirectUri) throws ApiNotAccessibleException, IOException;
 
     /**
-     * Returns {@code redirectUri} when it matches a redirect URI registered for {@code clientId}.
-     * Returns null when the redirect URI is blank, the client is unknown, or no registered URI matches.
+     * Returns the redirect URI registered for {@code clientId} that matches {@code redirectUri}.
+     * Returns null when {@code redirectUri} is blank, the client is unknown, or no registered URI matches.
      */
     String verifyRedirectUri(String clientId, String redirectUri);
     VerifiersDTO getTrustedVerifiers() throws ApiNotAccessibleException, IOException;

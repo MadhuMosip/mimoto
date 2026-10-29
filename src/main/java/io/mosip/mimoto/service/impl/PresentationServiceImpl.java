@@ -451,7 +451,7 @@ public class PresentationServiceImpl implements PresentationService {
                     Map.class
             );
 
-            log.info("Response from verifier after POST: {}", postResponse);
+            log.info("Received verifier response after POST");
             return resolveVerifierRedirect(clientId, postResponse, redirectUri);
 
         } catch (VPNotCreatedException e) {
@@ -467,12 +467,21 @@ public class PresentationServiceImpl implements PresentationService {
         if (redirectUri == null || redirectUri.isBlank()) {
             return null;
         }
+        URI receivedRedirectUri;
         try {
-            URI received = new URI(redirectUri);
-            if (received.getHost() == null) {
-                return null;
-            }
-            String receivedPath = (received.getPath() == null || received.getPath().isEmpty()) ? "/" : received.getPath();
+            receivedRedirectUri = new URI(redirectUri);
+        } catch (URISyntaxException exception) {
+            log.warn("Rejected malformed redirect URI");
+            return null;
+        }
+        if (receivedRedirectUri.getHost() == null || receivedRedirectUri.getScheme() == null) {
+            return null;
+        }
+        String receivedPath = (receivedRedirectUri.getPath() == null || receivedRedirectUri.getPath().isEmpty()) ? "/" : receivedRedirectUri.getPath();
+        if (containsPathTraversal(receivedPath)) {
+            return null;
+        }
+        try {
             boolean isRegistered = verifierService.getVerifierByClientId(clientId)
                     .map(VerifierDTO::getRedirectUris)
                     .orElseGet(Collections::emptyList)
@@ -481,23 +490,29 @@ public class PresentationServiceImpl implements PresentationService {
                         try {
                             URI registered = new URI(registeredRedirectUri);
                             if (registered.getHost() == null
-                                    || !registered.getScheme().equalsIgnoreCase(received.getScheme())
-                                    || !registered.getHost().equalsIgnoreCase(received.getHost())
-                                    || registered.getPort() != received.getPort()) {
+                                    || registered.getScheme() == null
+                                    || !registered.getScheme().equalsIgnoreCase(receivedRedirectUri.getScheme())
+                                    || !registered.getHost().equalsIgnoreCase(receivedRedirectUri.getHost())
+                                    || registered.getPort() != receivedRedirectUri.getPort()) {
                                 return false;
                             }
                             String registeredPath = (registered.getPath() == null || registered.getPath().isEmpty()) ? "/" : registered.getPath();
                             return receivedPath.equals(registeredPath)
                                     || receivedPath.startsWith(registeredPath.endsWith("/") ? registeredPath : registeredPath + "/");
                         } catch (URISyntaxException exception) {
+                            log.warn("Ignoring malformed registered redirect URI for a verifier");
                             return false;
                         }
                     });
             return isRegistered ? redirectUri : null;
         } catch (Exception exception) {
-            log.error("Failed to load registered redirect URIs for client {}", clientId, exception);
+            log.error("Failed to load registered redirect URIs", exception);
             return null;
         }
+    }
+
+    private boolean containsPathTraversal(String path) {
+        return Arrays.stream(path.split("/")).anyMatch(".."::equals);
     }
 
     @Override
@@ -520,7 +535,7 @@ public class PresentationServiceImpl implements PresentationService {
                     postRequest,
                     Map.class
             );
-            log.info("Response from verifier after error POST: {}", postResponse);
+            log.info("Received verifier response after error POST");
             return resolveVerifierRedirect(clientId, postResponse, redirectUri);
         } catch (VPNotCreatedException e) {
             throw e;
@@ -531,14 +546,16 @@ public class PresentationServiceImpl implements PresentationService {
     }
 
     private String resolveVerifierRedirect(String clientId, Map<String, Object> postResponse, String redirectUri) {
-        log.info("response_uri returned body: {}", postResponse);
         if (postResponse != null && postResponse.get("redirect_uri") instanceof String responseRedirectUri
                 && !responseRedirectUri.isEmpty()) {
-            log.info("response_uri returned redirect_uri: {}", responseRedirectUri);
-            return verifyRedirectUri(clientId, responseRedirectUri);
+            log.info("response_uri returned a redirect_uri");
+            String verifiedResponseRedirect = verifyRedirectUri(clientId, responseRedirectUri);
+            if (verifiedResponseRedirect != null) {
+                return verifiedResponseRedirect;
+            }
         }
         if (redirectUri != null && !redirectUri.isBlank()) {
-            log.info("Using redirectUri from request: {}", redirectUri);
+            log.info("Using redirect_uri from request");
             return verifyRedirectUri(clientId, redirectUri);
         }
         return null;

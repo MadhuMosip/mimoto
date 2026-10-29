@@ -123,7 +123,7 @@ public class PresentationController {
             try {
                 String redirectString = presentationService.submitErrorToResponseUri(clientId, responseUri, redirectUri, state, code, message);
                 if (redirectString != null) {
-                    log.info("Authorization error posted to response_uri. redirect URI: {}. code - {}", redirectString, code);
+                    log.info("Authorization error posted to response_uri. code - {}", code);
                     response.sendRedirect(redirectString);
                     return;
                 }

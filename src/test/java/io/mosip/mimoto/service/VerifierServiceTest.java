@@ -122,6 +122,63 @@ public class VerifierServiceTest {
     }
 
     @Test
+    public void should_returnRedirectUri_when_pathAndFragmentAreUnderRegisteredOrigin() throws Exception {
+        VerifierDTO verifier = VerifierDTO.builder()
+                .clientId("injiverify.dev.mosip.net")
+                .redirectUris(Collections.singletonList("https://injiverify.dev.mosip.net/"))
+                .responseUris(Collections.singletonList("https://injiverify.dev.mosip.net/v1/verify/vp-submission/vp-direct-post"))
+                .build();
+        VerifiersDTO dto = VerifiersDTO.builder().verifiers(Collections.singletonList(verifier)).build();
+        String json = new ObjectMapper().writeValueAsString(dto);
+        when(utilities.getTrustedVerifiersJsonValue()).thenReturn(json);
+        when(objectMapper.readValue(anyString(), eq(VerifiersDTO.class))).thenReturn(dto);
+
+        String returnedByVerifier = "https://injiverify.dev.mosip.net/v1/verify#response_code=091535f699ea575c7937fa5f0f454aee";
+
+        assertEquals(returnedByVerifier,
+                verifiersService.verifyRedirectUri("injiverify.dev.mosip.net", returnedByVerifier));
+    }
+
+    @Test
+    public void should_returnRedirectUri_when_onlyFragmentDiffersFromRegisteredOrigin() throws Exception {
+        VerifierDTO verifier = VerifierDTO.builder()
+                .clientId("injiverify.dev.mosip.net")
+                .redirectUris(Collections.singletonList("https://injiverify.dev.mosip.net/"))
+                .responseUris(Collections.singletonList("https://injiverify.dev.mosip.net/v1/verify/vp-submission/vp-direct-post"))
+                .build();
+        VerifiersDTO dto = VerifiersDTO.builder().verifiers(Collections.singletonList(verifier)).build();
+        String json = new ObjectMapper().writeValueAsString(dto);
+        when(utilities.getTrustedVerifiersJsonValue()).thenReturn(json);
+        when(objectMapper.readValue(anyString(), eq(VerifiersDTO.class))).thenReturn(dto);
+
+        String returnedByVerifier = "https://injiverify.dev.mosip.net/#response_code=abc";
+
+        assertEquals(returnedByVerifier,
+                verifiersService.verifyRedirectUri("injiverify.dev.mosip.net", returnedByVerifier));
+    }
+
+    @Test
+    public void should_returnNull_when_schemeDiffersFromRegisteredUri() {
+        assertNull(verifiersService.verifyRedirectUri("test-clientId", "http://test-redirectUri/callback"));
+    }
+
+    @Test
+    public void should_returnNull_when_pathIsNotUnderRegisteredPath() throws Exception {
+        VerifierDTO verifier = VerifierDTO.builder()
+                .clientId("callback-client")
+                .redirectUris(Collections.singletonList("https://verifier.example/app/callback"))
+                .responseUris(Collections.singletonList("https://verifier.example/post"))
+                .build();
+        VerifiersDTO dto = VerifiersDTO.builder().verifiers(Collections.singletonList(verifier)).build();
+        String json = new ObjectMapper().writeValueAsString(dto);
+        when(utilities.getTrustedVerifiersJsonValue()).thenReturn(json);
+        when(objectMapper.readValue(anyString(), eq(VerifiersDTO.class))).thenReturn(dto);
+
+        assertNull(verifiersService.verifyRedirectUri("callback-client",
+                "https://verifier.example/other#response_code=abc"));
+    }
+
+    @Test
     public void should_returnNull_when_redirectUriDoesNotMatch() {
         assertNull(verifiersService.verifyRedirectUri("test-clientId", "https://evil.example/phish"));
     }

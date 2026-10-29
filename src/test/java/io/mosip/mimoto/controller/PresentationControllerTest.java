@@ -33,6 +33,7 @@ import static org.junit.Assert.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -73,12 +74,12 @@ public class PresentationControllerTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
-        lenient().when(verifierService.verifyRedirectUri(eq(CLIENT_ID), anyString())).thenAnswer(invocation -> {
+        lenient().when(verifierService.verifyRedirectUri(eq(CLIENT_ID), nullable(String.class))).thenAnswer(invocation -> {
             String redirectUri = invocation.getArgument(1);
-            if (REDIRECT_URI.equals(redirectUri) || VERIFIER_ERROR_REDIRECT.equals(redirectUri)) {
-                return redirectUri;
+            if (redirectUri == null || redirectUri.isBlank() || redirectUri.contains("evil.example")) {
+                return null;
             }
-            return null;
+            return redirectUri;
         });
     }
 
@@ -629,6 +630,31 @@ public class PresentationControllerTest {
                         .param("response_uri", RESPONSE_URI))
                 .andExpect(status().isFound())
                 .andExpect(redirectedUrl(expectedRedirectUrl));
+    }
+
+    @Test
+    public void should_redirectToVerifierRedirectUri_when_errorPostReturnsResponseCode() throws Exception {
+        String errorCode = "access_denied";
+        String errorMessage = "The Wallet did not have the requested Credentials to satisfy the Authorization Request.";
+        String verifierRedirect = "https://injiverify.dev.mosip.net/v1/verify#response_code=091535f699ea575c7937fa5f0f454aee";
+        when(objectMapper.readValue(PRESENTATION_DEFINITION_JSON, PresentationDefinitionDTO.class))
+                .thenReturn(new PresentationDefinitionDTO());
+        when(verifierService.validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI))
+                .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
+        when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
+                .thenThrow(new VPNotCreatedException(errorCode, errorMessage));
+        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
+                .thenReturn(verifierRedirect);
+
+        mockMvc.perform(get("/authorize")
+                        .param("response_type", RESPONSE_TYPE)
+                        .param("resource", RESOURCE)
+                        .param("presentation_definition", PRESENTATION_DEFINITION_JSON)
+                        .param("client_id", CLIENT_ID)
+                        .param("redirect_uri", REDIRECT_URI)
+                        .param("response_uri", RESPONSE_URI))
+                .andExpect(status().isFound())
+                .andExpect(redirectedUrl(verifierRedirect));
     }
 
 }

@@ -74,7 +74,7 @@ public class PresentationControllerTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
-        lenient().when(verifierService.verifyRedirectUri(eq(CLIENT_ID), nullable(String.class))).thenAnswer(invocation -> {
+        lenient().when(presentationService.verifyRedirectUri(eq(CLIENT_ID), nullable(String.class))).thenAnswer(invocation -> {
             String redirectUri = invocation.getArgument(1);
             if (redirectUri == null || redirectUri.isBlank() || redirectUri.contains("evil.example")) {
                 return null;
@@ -171,7 +171,7 @@ public class PresentationControllerTest {
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(exception);
-        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
+        when(presentationService.submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
                 .thenReturn("https://verifier.example.com/after-error");
 
         // Act & Assert
@@ -187,7 +187,7 @@ public class PresentationControllerTest {
 
         verify(verifierService).validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI);
         verify(presentationService).processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class));
-        verify(presentationService).submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage);
+        verify(presentationService).submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage);
     }
 
     @Test
@@ -204,7 +204,7 @@ public class PresentationControllerTest {
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(exception);
-        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
+        when(presentationService.submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
                 .thenReturn("https://verifier.example.com/after-error");
 
         // Act & Assert
@@ -220,7 +220,7 @@ public class PresentationControllerTest {
 
         verify(verifierService).validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI);
         verify(presentationService).processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class));
-        verify(presentationService).submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage);
+        verify(presentationService).submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage);
     }
 
     @Test
@@ -236,7 +236,7 @@ public class PresentationControllerTest {
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(exception);
         when(presentationService.submitErrorToResponseUri(
-                RESPONSE_URI, REDIRECT_URI, null,
+                CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null,
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorCode(),
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorMessage()))
                 .thenReturn("https://verifier.example.com/after-error");
@@ -255,7 +255,7 @@ public class PresentationControllerTest {
         verify(verifierService).validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI);
         verify(presentationService).processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class));
         verify(presentationService).submitErrorToResponseUri(
-                RESPONSE_URI, REDIRECT_URI, null,
+                CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null,
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorCode(),
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorMessage());
     }
@@ -268,7 +268,7 @@ public class PresentationControllerTest {
         when(verifierService.validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI))
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.submitErrorToResponseUri(
-                RESPONSE_URI, REDIRECT_URI, null,
+                CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null,
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorCode(),
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorMessage()))
                 .thenReturn("https://verifier.example.com/after-error");
@@ -420,7 +420,7 @@ public class PresentationControllerTest {
         when(verifierService.validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI))
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.submitErrorToResponseUri(
-                RESPONSE_URI, REDIRECT_URI, null,
+                CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null,
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorCode(),
                 ErrorConstants.INTERNAL_SERVER_ERROR.getErrorMessage()))
                 .thenReturn("https://verifier.example.com/after-error");
@@ -484,7 +484,7 @@ public class PresentationControllerTest {
         when(verifierService.validateVerifier(CLIENT_ID, RESPONSE_URI, REDIRECT_URI))
                 .thenReturn(createVerifierDTO(SpecVersion.V1));
         when(presentationService.submitErrorToResponseUri(
-                RESPONSE_URI, REDIRECT_URI, null,
+                CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null,
                 ErrorConstants.INVALID_REQUEST.getErrorCode(),
                 ErrorConstants.INVALID_REQUEST.getErrorMessage()))
                 .thenReturn("https://verifier.example.com/after-error");
@@ -502,7 +502,7 @@ public class PresentationControllerTest {
 
         verify(presentationService, never()).processVPRequest(any(), any());
         verify(presentationService).submitErrorToResponseUri(
-                RESPONSE_URI, REDIRECT_URI, null,
+                CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null,
                 ErrorConstants.INVALID_REQUEST.getErrorCode(),
                 ErrorConstants.INVALID_REQUEST.getErrorMessage());
     }
@@ -534,7 +534,7 @@ public class PresentationControllerTest {
                 .andExpect(status().isFound())
                 .andExpect(redirectedUrl(expectedRedirectUrl));
 
-        verify(presentationService, never()).submitErrorToResponseUri(any(), any(), any(), any(), any());
+        verify(presentationService, never()).submitErrorToResponseUri(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -547,7 +547,7 @@ public class PresentationControllerTest {
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(new VPNotCreatedException(errorCode, errorMessage));
-        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, "session-state", errorCode, errorMessage))
+        when(presentationService.submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, "session-state", errorCode, errorMessage))
                 .thenThrow(new VPNotCreatedException(ErrorConstants.INTERNAL_SERVER_ERROR.getErrorCode(),
                         ErrorConstants.INTERNAL_SERVER_ERROR.getErrorMessage()));
 
@@ -580,8 +580,8 @@ public class PresentationControllerTest {
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(new VPNotCreatedException(errorCode, errorMessage));
-        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
-                .thenReturn("https://evil.example/phish");
+        when(presentationService.submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
+                .thenReturn(null);
 
         String expectedRedirectUrl = String.format(
                 "%s?error_code=%s&error_message=%s",
@@ -612,8 +612,8 @@ public class PresentationControllerTest {
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(new VPNotCreatedException(errorCode, errorMessage));
-        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, untrustedRedirectUri, null, errorCode, errorMessage))
-                .thenReturn(untrustedRedirectUri);
+        when(presentationService.submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, untrustedRedirectUri, null, errorCode, errorMessage))
+                .thenReturn(null);
 
         String expectedRedirectUrl = String.format(
                 "https://inji.web.redirect.url?error_code=%s&error_message=%s",
@@ -643,7 +643,7 @@ public class PresentationControllerTest {
                 .thenReturn(createVerifierDTO(SpecVersion.DRAFT_23));
         when(presentationService.processVPRequest(any(PresentationRequestDTO.class), any(SpecVersion.class)))
                 .thenThrow(new VPNotCreatedException(errorCode, errorMessage));
-        when(presentationService.submitErrorToResponseUri(RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
+        when(presentationService.submitErrorToResponseUri(CLIENT_ID, RESPONSE_URI, REDIRECT_URI, null, errorCode, errorMessage))
                 .thenReturn(verifierRedirect);
 
         mockMvc.perform(get("/authorize")

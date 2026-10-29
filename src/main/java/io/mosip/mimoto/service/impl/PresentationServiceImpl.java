@@ -9,9 +9,11 @@ import io.mosip.mimoto.dto.mimoto.VCCredentialProperties;
 import io.mosip.mimoto.dto.mimoto.VCCredentialResponse;
 import io.mosip.mimoto.dto.mimoto.VCCredentialResponseProof;
 import io.mosip.mimoto.dto.openid.presentation.*;
+import io.mosip.mimoto.dto.openid.VerifierDTO;
 import io.mosip.mimoto.exception.ErrorConstants;
 import io.mosip.mimoto.exception.VPNotCreatedException;
 import io.mosip.mimoto.service.PresentationService;
+import io.mosip.mimoto.service.VerifierService;
 import io.mosip.mimoto.util.RestApiClient;
 import io.mosip.openID4VP.constants.SpecVersion;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +24,8 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -39,6 +43,8 @@ public class PresentationServiceImpl implements PresentationService {
 
     private final RestApiClient restApiClient;
 
+    private final VerifierService verifierService;
+
     private final String injiOvpRedirectURLPattern;
 
     private final Integer maximumResponseHeaderSize;
@@ -49,6 +55,7 @@ public class PresentationServiceImpl implements PresentationService {
             DataShareServiceImpl dataShareService,
             ObjectMapper objectMapper,
             RestApiClient restApiClient,
+            VerifierService verifierService,
             @Value("${mosip.inji.ovp.redirect.url.pattern}") String injiOvpRedirectURLPattern,
             @Value("${mosip.inji.ovp.dcql.redirect.url.pattern:%s#vp_token=%s}") String dcqlRedirectURLPattern,
             @Value("${server.tomcat.max-http-response-header-size:65536}") Integer maximumResponseHeaderSize
@@ -56,6 +63,7 @@ public class PresentationServiceImpl implements PresentationService {
         this.dataShareService = dataShareService;
         this.objectMapper = objectMapper;
         this.restApiClient = restApiClient;
+        this.verifierService = verifierService;
         this.injiOvpRedirectURLPattern = injiOvpRedirectURLPattern;
         this.dcqlRedirectURLPattern = dcqlRedirectURLPattern;
         this.maximumResponseHeaderSize = maximumResponseHeaderSize;
@@ -163,6 +171,7 @@ public class PresentationServiceImpl implements PresentationService {
         if (presentationRequestDTO.getResponseMode() != null
                 && "direct_post".equals(presentationRequestDTO.getResponseMode())) {
             return postVpToResponseUri(
+                    presentationRequestDTO.getClientId(),
                     presentationRequestDTO.getResponseUri(),
                     presentationRequestDTO.getRedirectUri(),
                     vpToken,
@@ -377,6 +386,7 @@ public class PresentationServiceImpl implements PresentationService {
         // If response_uri is present, POST the response
         if (presentationRequestDTO.getResponseMode() != null && "direct_post".equals(presentationRequestDTO.getResponseMode())) {
             return postVpToResponseUri(
+                    presentationRequestDTO.getClientId(),
                     presentationRequestDTO.getResponseUri(),
                     presentationRequestDTO.getRedirectUri(),
                     vpToken,
@@ -411,7 +421,7 @@ public class PresentationServiceImpl implements PresentationService {
         return objectMapper.writeValueAsString(vpDTO);
     }
 
-    private String postVpToResponseUri(String responseUri, String redirectUri, String vpToken,
+    private String postVpToResponseUri(String clientId, String responseUri, String redirectUri, String vpToken,
                                        String presentationSubmission, String state, SpecVersion specVersion) {
         MultiValueMap<String, String> postRequest = new LinkedMultiValueMap<>();
         switch (specVersion) {
@@ -442,7 +452,7 @@ public class PresentationServiceImpl implements PresentationService {
             );
 
             log.info("Response from verifier after POST: {}", postResponse);
-            return resolveVerifierRedirect(postResponse, redirectUri, responseUri);
+            return resolveVerifierRedirect(clientId, postResponse, redirectUri);
 
         } catch (VPNotCreatedException e) {
             throw e;
@@ -453,7 +463,45 @@ public class PresentationServiceImpl implements PresentationService {
     }
 
     @Override
-    public String submitErrorToResponseUri(String responseUri, String redirectUri, String state,
+    public String verifyRedirectUri(String clientId, String redirectUri) {
+        if (redirectUri == null || redirectUri.isBlank()) {
+            return null;
+        }
+        try {
+            URI received = new URI(redirectUri);
+            if (received.getHost() == null) {
+                return null;
+            }
+            String receivedPath = (received.getPath() == null || received.getPath().isEmpty()) ? "/" : received.getPath();
+            boolean isRegistered = verifierService.getVerifierByClientId(clientId)
+                    .map(VerifierDTO::getRedirectUris)
+                    .orElseGet(Collections::emptyList)
+                    .stream()
+                    .anyMatch(registeredRedirectUri -> {
+                        try {
+                            URI registered = new URI(registeredRedirectUri);
+                            if (registered.getHost() == null
+                                    || !registered.getScheme().equalsIgnoreCase(received.getScheme())
+                                    || !registered.getHost().equalsIgnoreCase(received.getHost())
+                                    || registered.getPort() != received.getPort()) {
+                                return false;
+                            }
+                            String registeredPath = (registered.getPath() == null || registered.getPath().isEmpty()) ? "/" : registered.getPath();
+                            return receivedPath.equals(registeredPath)
+                                    || receivedPath.startsWith(registeredPath.endsWith("/") ? registeredPath : registeredPath + "/");
+                        } catch (URISyntaxException exception) {
+                            return false;
+                        }
+                    });
+            return isRegistered ? redirectUri : null;
+        } catch (Exception exception) {
+            log.error("Failed to load registered redirect URIs for client {}", clientId, exception);
+            return null;
+        }
+    }
+
+    @Override
+    public String submitErrorToResponseUri(String clientId, String responseUri, String redirectUri, String state,
                                             String errorCode, String errorDescription) {
         MultiValueMap<String, String> postRequest = new LinkedMultiValueMap<>();
         postRequest.add("error", errorCode);
@@ -473,7 +521,7 @@ public class PresentationServiceImpl implements PresentationService {
                     Map.class
             );
             log.info("Response from verifier after error POST: {}", postResponse);
-            return resolveVerifierRedirect(postResponse, redirectUri, responseUri);
+            return resolveVerifierRedirect(clientId, postResponse, redirectUri);
         } catch (VPNotCreatedException e) {
             throw e;
         } catch (Exception e) {
@@ -482,18 +530,17 @@ public class PresentationServiceImpl implements PresentationService {
         }
     }
 
-    private String resolveVerifierRedirect(Map<String, Object> postResponse, String redirectUri, String responseUri) {
+    private String resolveVerifierRedirect(String clientId, Map<String, Object> postResponse, String redirectUri) {
         log.info("response_uri returned body: {}", postResponse);
         if (postResponse != null && postResponse.get("redirect_uri") instanceof String responseRedirectUri
                 && !responseRedirectUri.isEmpty()) {
             log.info("response_uri returned redirect_uri: {}", responseRedirectUri);
-            return responseRedirectUri;
+            return verifyRedirectUri(clientId, responseRedirectUri);
         }
         if (redirectUri != null && !redirectUri.isBlank()) {
             log.info("Using redirectUri from request: {}", redirectUri);
-            return redirectUri;
+            return verifyRedirectUri(clientId, redirectUri);
         }
-
         return null;
     }
 

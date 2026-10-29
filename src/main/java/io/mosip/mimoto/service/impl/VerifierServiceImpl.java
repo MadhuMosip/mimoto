@@ -21,7 +21,6 @@ import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
 import org.springframework.cache.annotation.Cacheable;
 
-import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Collections;
 import java.util.List;
@@ -100,61 +99,10 @@ public class VerifierServiceImpl implements VerifierService {
         return verifierDTO;
     }
 
-    @Override
-    public String verifyRedirectUri(String clientId, String redirectUri) {
-        if (redirectUri == null || redirectUri.isBlank()) {
-            return null;
-        }
-        try {
-            Optional<VerifierDTO> verifier = getVerifierByClientId(clientId);
-            if (verifier.isEmpty()) {
-                return null;
-            }
-            List<String> registeredRedirectUris = Optional.ofNullable(verifier.get().getRedirectUris())
-                    .orElseGet(Collections::emptyList);
-            Optional<String> matchedTrustedUri = registeredRedirectUris.stream()
-                    .filter(trustedRedirectUri -> matchesTrustedRedirectTarget(trustedRedirectUri, redirectUri))
-                    .findFirst();
-            if (matchedTrustedUri.isPresent()) {
-                return redirectUri;
-            }
-            return null;
-        } catch (Exception lookupFailure) {
-            log.error("Failed to load trusted verifier redirect URIs for client {}", clientId, lookupFailure);
-            return null;
-        }
-    }
-
     private boolean matchesRegisteredUri(String registeredUri, String requestUri) {
         return urlValidator.isValid(registeredUri)
                 && urlValidator.isValid(requestUri)
                 && pathMatcher.match(registeredUri, requestUri);
-    }
-
-    /**
-     * Direct Post {@code redirect_uri} may add a path and {@code #response_code}.
-     * Same origin as a trusted redirect URI is enough; fragment and query are ignored.
-     */
-    private boolean matchesTrustedRedirectTarget(String trustedRedirectUri, String verifyRedirectUri) {
-        try {
-            URI trustedRedirect = new URI(trustedRedirectUri);
-            URI verifyRedirect = new URI(verifyRedirectUri);
-            if (trustedRedirect.getHost() == null || verifyRedirect.getHost() == null
-                    || !trustedRedirect.getScheme().equalsIgnoreCase(verifyRedirect.getScheme())
-                    || !trustedRedirect.getHost().equalsIgnoreCase(verifyRedirect.getHost())
-                    || trustedRedirect.getPort() != verifyRedirect.getPort()) {
-                return false;
-            }
-            String trustedRedirectPath = (trustedRedirect.getPath() == null || trustedRedirect.getPath().isEmpty()) ? "/" : trustedRedirect.getPath();
-            String verifyRedirectPath = (verifyRedirect.getPath() == null || verifyRedirect.getPath().isEmpty()) ? "/" : verifyRedirect.getPath();
-            boolean pathMatches = verifyRedirectPath.equals(trustedRedirectPath)
-                    || verifyRedirectPath.startsWith(trustedRedirectPath.endsWith("/") ? trustedRedirectPath : trustedRedirectPath + "/");
-            return pathMatches;
-        } catch (URISyntaxException e) {
-            log.info("verifyRedirectUri parse failed. trustedRedirectUri={}, verifyRedirectUri={}, error={}",
-                    trustedRedirectUri, verifyRedirectUri, e.getMessage());
-            return false;
-        }
     }
 
     @Override

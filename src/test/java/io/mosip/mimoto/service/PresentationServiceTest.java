@@ -814,14 +814,29 @@ public class PresentationServiceTest {
     }
 
     @Test
-    public void should_returnNull_when_verifierRedirectIsUntrusted() throws Exception {
+    public void should_fallBackToRequestRedirectUri_when_verifierRedirectIsUntrusted() throws Exception {
+        when(restApiClient.postApi(anyString(), any(), any(), eq(Map.class)))
+                .thenReturn(Map.of("redirect_uri", "https://evil.example/phish"));
+
+        assertEquals("https://verifier.example.com/callback",
+                presentationService.submitErrorToResponseUri(
+                        "test-clientId",
+                        "https://verifier.example.com/response",
+                        "https://verifier.example.com/callback",
+                        null,
+                        ErrorConstants.URI_TOO_LONG.getErrorCode(),
+                        ErrorConstants.URI_TOO_LONG.getErrorMessage()));
+    }
+
+    @Test
+    public void should_returnNull_when_verifierAndRequestRedirectAreUntrusted() throws Exception {
         when(restApiClient.postApi(anyString(), any(), any(), eq(Map.class)))
                 .thenReturn(Map.of("redirect_uri", "https://evil.example/phish"));
 
         assertNull(presentationService.submitErrorToResponseUri(
                 "test-clientId",
                 "https://verifier.example.com/response",
-                "https://verifier.example.com/callback",
+                "https://evil.example/callback",
                 null,
                 ErrorConstants.URI_TOO_LONG.getErrorCode(),
                 ErrorConstants.URI_TOO_LONG.getErrorMessage()));
@@ -877,25 +892,13 @@ public class PresentationServiceTest {
     }
 
     @Test
-    public void should_returnNull_when_redirectUriPathContainsDotDot() throws Exception {
-        when(verifierService.getVerifierByClientId("callback-client")).thenReturn(Optional.of(
-                VerifierDTO.builder()
-                        .clientId("callback-client")
-                        .redirectUris(List.of("https://verifier.example/app/"))
-                        .build()));
-
+    public void should_returnNull_when_redirectUriPathContainsDotDot() {
         assertNull(presentationService.verifyRedirectUri("callback-client",
                 "https://verifier.example/app/../admin"));
     }
 
     @Test
-    public void should_returnNull_when_redirectUriPathContainsEncodedDotDot() throws Exception {
-        when(verifierService.getVerifierByClientId("callback-client")).thenReturn(Optional.of(
-                VerifierDTO.builder()
-                        .clientId("callback-client")
-                        .redirectUris(List.of("https://verifier.example/app/"))
-                        .build()));
-
+    public void should_returnNull_when_redirectUriPathContainsEncodedDotDot() {
         assertNull(presentationService.verifyRedirectUri("callback-client",
                 "https://verifier.example/app/%2e%2e/admin"));
     }

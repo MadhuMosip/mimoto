@@ -19,10 +19,10 @@ public interface PresentationService {
                                      String errorCode, String errorDescription);
 
     /**
-     * After Direct Post the verifier may return a redirect URI with an extra path and
-     * {@code #response_code}. Return that URI if it belongs to this client's registered
-     * {@code redirect_uris} (same host, path under the registered URI). Fragment and query
-     * are ignored for the check. Return {@code null} if it is not registered.
+     * After Direct Post the verifier may return a redirect URI with query or
+     * {@code #response_code}. Those are stripped from the received URI; registered
+     * {@code redirect_uris} have none. Return the original URI if the remaining path
+     * equals a registered entry, otherwise {@code null}.
      */
-    String verifyRedirectUri(String clientId, String redirectUri);
+    String validateRedirectUri(String clientId, String redirectUri);
 }

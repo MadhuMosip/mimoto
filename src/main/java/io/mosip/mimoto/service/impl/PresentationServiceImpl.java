@@ -24,8 +24,6 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -463,56 +461,24 @@ public class PresentationServiceImpl implements PresentationService {
     }
 
     @Override
-    public String verifyRedirectUri(String clientId, String redirectUri) {
+    public String validateRedirectUri(String clientId, String redirectUri) {
         if (redirectUri == null || redirectUri.isBlank()) {
             return null;
         }
-        URI receivedRedirectUri;
-        try {
-            receivedRedirectUri = new URI(redirectUri);
-        } catch (URISyntaxException exception) {
-            log.warn("Rejected malformed redirect URI");
-            return null;
-        }
-        if (receivedRedirectUri.getHost() == null || receivedRedirectUri.getScheme() == null) {
-            return null;
-        }
-        String receivedPath = (receivedRedirectUri.getPath() == null || receivedRedirectUri.getPath().isEmpty()) ? "/" : receivedRedirectUri.getPath();
-        if (containsPathTraversal(receivedPath)) {
-            return null;
-        }
+        String receivedUriPath = redirectUri.split("[?#]", 2)[0];
         try {
             boolean isRegistered = verifierService.getVerifierByClientId(clientId)
                     .map(VerifierDTO::getRedirectUris)
                     .orElseGet(Collections::emptyList)
                     .stream()
-                    .anyMatch(registeredRedirectUri -> {
-                        try {
-                            URI registered = new URI(registeredRedirectUri);
-                            if (registered.getHost() == null
-                                    || registered.getScheme() == null
-                                    || !registered.getScheme().equalsIgnoreCase(receivedRedirectUri.getScheme())
-                                    || !registered.getHost().equalsIgnoreCase(receivedRedirectUri.getHost())
-                                    || registered.getPort() != receivedRedirectUri.getPort()) {
-                                return false;
-                            }
-                            String registeredPath = (registered.getPath() == null || registered.getPath().isEmpty()) ? "/" : registered.getPath();
-                            return receivedPath.equals(registeredPath)
-                                    || receivedPath.startsWith(registeredPath.endsWith("/") ? registeredPath : registeredPath + "/");
-                        } catch (URISyntaxException exception) {
-                            log.warn("Ignoring malformed registered redirect URI for a verifier");
-                            return false;
-                        }
-                    });
+                    .anyMatch(registeredRedirectUri ->
+                            receivedUriPath.equals(registeredRedirectUri)
+                                    || (receivedUriPath + "/").equals(registeredRedirectUri));
             return isRegistered ? redirectUri : null;
         } catch (Exception exception) {
             log.error("Failed to load registered redirect URIs", exception);
             return null;
         }
-    }
-
-    private boolean containsPathTraversal(String path) {
-        return Arrays.stream(path.split("/")).anyMatch(".."::equals);
     }
 
     @Override
@@ -549,14 +515,14 @@ public class PresentationServiceImpl implements PresentationService {
         if (postResponse != null && postResponse.get("redirect_uri") instanceof String responseRedirectUri
                 && !responseRedirectUri.isEmpty()) {
             log.info("response_uri returned a redirect_uri");
-            String verifiedResponseRedirect = verifyRedirectUri(clientId, responseRedirectUri);
+            String verifiedResponseRedirect = validateRedirectUri(clientId, responseRedirectUri);
             if (verifiedResponseRedirect != null) {
                 return verifiedResponseRedirect;
             }
         }
         if (redirectUri != null && !redirectUri.isBlank()) {
             log.info("Using redirect_uri from request");
-            return verifyRedirectUri(clientId, redirectUri);
+            return validateRedirectUri(clientId, redirectUri);
         }
         return null;
     }

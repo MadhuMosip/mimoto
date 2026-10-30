@@ -132,7 +132,7 @@ public class PresentationController {
                 log.error("Failed to post authorization error to response_uri. Falling back to error redirect.", postFailure);
             }
         }
-        String fallbackRedirectUri = presentationService.verifyRedirectUri(clientId, redirectUri);
+        String fallbackRedirectUri = presentationService.validateRedirectUri(clientId, redirectUri);
         sendRedirect(response, fallbackRedirectUri != null ? fallbackRedirectUri : injiWebRedirectUrl, code, message, exception);
     }
 

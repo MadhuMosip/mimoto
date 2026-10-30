@@ -74,7 +74,7 @@ public class PresentationControllerTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
-        lenient().when(presentationService.verifyRedirectUri(eq(CLIENT_ID), nullable(String.class))).thenAnswer(invocation -> {
+        lenient().when(presentationService.validateRedirectUri(eq(CLIENT_ID), nullable(String.class))).thenAnswer(invocation -> {
             String redirectUri = invocation.getArgument(1);
             if (redirectUri == null || redirectUri.isBlank() || redirectUri.contains("evil.example")) {
                 return null;
